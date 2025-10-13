@@ -1,19 +1,15 @@
 #version 330 core
 out vec4 FragColor;
-
 in vec2 TexCoords;
 
 uniform sampler2D screenTexture;
 uniform vec2 u_resolution;
 
 // --- Tunable FXAA Parameters ---
-// Lower this to apply AA to lower contrast edges (more aggressive).
-// Good values are between 0.06 and 0.125.
-#define FXAA_CONTRAST_THRESHOLD 2.083
+#define FXAA_CONTRAST_THRESHOLD 0.083
 
 // --- End of Parameters ---
 
-// Converts RGB to perceived luminance
 float rgb_to_luma(vec3 rgb) {
     return sqrt(dot(rgb, vec3(0.299, 0.587, 0.114)));
 }
@@ -23,7 +19,9 @@ void main() {
 
     // --- FXAA ---
     // 1. Sample the center pixel and its neighbors
-    vec3 color_center = texture(screenTexture, TexCoords).rgb;
+    // CHANGE 3: Sample the full RGBA color, not just RGB
+    vec4 color_center_rgba = texture(screenTexture, TexCoords);
+    vec3 color_center = color_center_rgba.rgb;
     float luma_center = rgb_to_luma(color_center);
 
     float luma_down = rgb_to_luma(texture(screenTexture, TexCoords + vec2(0.0, -inv_res.y)).rgb);
@@ -37,7 +35,8 @@ void main() {
     
     // 3. If contrast is too low, it's not an edge, so exit
     if (luma_max - luma_min < luma_max * FXAA_CONTRAST_THRESHOLD) {
-        FragColor = vec4(color_center, 1.0);
+        // CHANGE 4: Output the original RGBA color, preserving alpha
+        FragColor = color_center_rgba;
         return;
     }
 
@@ -62,11 +61,13 @@ void main() {
     vec3 result2 = texture(screenTexture, TexCoords + dir * (2.0/3.0 - 0.5)).rgb;
     vec3 blended_color = (result1 + result2) * 0.5;
 
-    // 7. Choose the final color based on which is closer to the center pixel's luma
+    // 7. Choose the final color and combine with original alpha
     float luma_avg = rgb_to_luma(blended_color);
     if (luma_avg < luma_min || luma_avg > luma_max) {
-        FragColor = vec4(color_center, 1.0);
+        // CHANGE 5: Output the original RGBA color
+        FragColor = color_center_rgba;
     } else {
-        FragColor = vec4(blended_color, 1.0);
+        // CHANGE 6: Combine the anti-aliased RGB with the original alpha
+        FragColor = vec4(blended_color, color_center_rgba.a);
     }
 }
