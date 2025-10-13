@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <chrono>
 #include <algorithm> // Required for std::max/min
+#include <cmath>     // Required for fmod
 #include "ini.h"
 #include "Shader.h"
 #include <glad/glad.h>
@@ -30,11 +31,13 @@ struct Point {
     glm::vec4 position; // .xy = position, .zw unused
     glm::vec4 color;
 };
+
 enum Variation { LINEAR, SINUSOIDAL, SPHERICAL, SWIRL, HORSESHOE };
 const std::map<std::string, Variation> variation_map = {
     {"LINEAR", LINEAR}, {"SINUSOIDAL", SINUSOIDAL}, {"SPHERICAL", SPHERICAL},
     {"SWIRL", SWIRL}, {"HORSESHOE", HORSESHOE}
 };
+
 struct Transform {
     glm::vec4 params1{}; // x=a, y=b, z=c, w=d
     glm::vec4 params2{}; // x=e, y=f
@@ -52,11 +55,8 @@ std::vector<Transform> target_transforms;
 std::vector<std::vector<Transform>> config_states; // Holds all presets from config.ini
 int current_state_index = 0;
 int animation_direction = 1; // 1 for forward, -1 for backward
-
 float interpolation_alpha = 1.0f; // 0.0 = previous, 1.0 = target
-float state_timer = 0.0f;
 float INTERPOLATION_DURATION = 2.0f; // seconds
-float STATE_DURATION = 10.0f; // seconds
 
 // NEW: Seed for the fractal. 0 = random, any other value is fixed.
 unsigned int fractal_seed = 0;
@@ -84,6 +84,7 @@ int main() {
     pointShaderProgram = create_shader_program_from_files("shaders/point.vert", "shaders/point.frag");
     unsigned int quadShaderProgram = create_shader_program_from_files("shaders/quad.vert", "shaders/quad.frag");
     computeShaderProgram = create_compute_shader_program_from_file("shaders/fractal.comp");
+
     create_framebuffer();
     create_screen_quad();
     setup_gpu_compute();
@@ -107,29 +108,19 @@ int main() {
         double current_time = glfwGetTime();
         float delta_time = static_cast<float>(current_time - last_frame_time);
         last_frame_time = current_time;
-
         glfwPollEvents();
 
-        // --- NEW: Corrected Interpolation & State Change Logic ---
-        // First, handle interpolation. This runs while we are in transition.
-        if (interpolation_alpha < 1.0f) {
+        // --- Interpolation & State Change Logic ---
+        // This logic handles continuous animation from one state to the next without pausing.
+        if (config_states.size() > 1) {
             interpolation_alpha += delta_time / INTERPOLATION_DURATION;
-            // When the transition finishes, clamp the value and reset the state timer
-            // so the new pause can begin.
-            if (interpolation_alpha >= 1.0f) {
-                interpolation_alpha = 1.0f;
-                state_timer = 0.0f; 
-            }
-        } 
-        // If we are NOT in transition, run the pause timer.
-        else if (config_states.size() > 1) {
-            state_timer += delta_time;
 
-            // If the pause duration has been met, trigger the next transition.
-            if (state_timer >= STATE_DURATION) {
-                // Set the current state as the starting point for interpolation
+            // When a transition completes, immediately start the next one.
+            if (interpolation_alpha >= 1.0f) {
+                // The target state of the just-finished transition becomes the starting point.
                 previous_transforms = config_states[current_state_index];
 
+                // Determine the next state based on the current animation mode.
                 if (animation_mode == PING_PONG) {
                     int next_state_index = current_state_index + animation_direction;
                     if (next_state_index >= config_states.size() || next_state_index < 0) {
@@ -137,13 +128,13 @@ int main() {
                         next_state_index = current_state_index + animation_direction;
                     }
                     current_state_index = next_state_index;
-                } else if (animation_mode == LOOP) { // Change else to else if
+                } else if (animation_mode == LOOP) {
                     current_state_index = (current_state_index + 1) % config_states.size();
                 } else { // RANDOM mode
                     if (config_states.size() > 1) {
                         std::uniform_int_distribution<int> dist(0, config_states.size() - 1);
                         int next_state_index = current_state_index;
-                        // Ensure we don't pick the same state twice in a row
+                        // Ensure we don't pick the same state twice in a row.
                         while (next_state_index == current_state_index) {
                             next_state_index = dist(rd_generator);
                         }
@@ -151,11 +142,13 @@ int main() {
                     }
                 }
                 
-                // Set the new target state and start the interpolation
+                // Set the new target state and carry over the remainder time for a smooth transition.
                 target_transforms = config_states[current_state_index];
-                interpolation_alpha = 0.0f;
+                interpolation_alpha = fmod(interpolation_alpha, 1.0f);
                 std::cout << "Animating to state " << (current_state_index + 1) << "..." << std::endl;
             }
+        } else {
+             interpolation_alpha = 1.0f; // If only one state, stay at 100%
         }
         
         std::vector<Transform> interpolated_transforms;
@@ -201,8 +194,8 @@ int main() {
         glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
-        glUseProgram(pointShaderProgram);
 
+        glUseProgram(pointShaderProgram);
         glm::mat4 projection = glm::ortho(-2.0f, 2.0f, -2.0f, 2.0f, -1.0f, 1.0f);
         glUniformMatrix4fv(glGetUniformLocation(pointShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         
@@ -254,7 +247,6 @@ void generate_fractal_gpu(const std::vector<Transform>& frame_transforms) {
     glUseProgram(computeShaderProgram);
     glUniform1ui(glGetUniformLocation(computeShaderProgram, "num_transforms"), frame_transforms.size());
     glUniform1ui(glGetUniformLocation(computeShaderProgram, "total_points"), TOTAL_POINTS);
-
     unsigned int current_seed = (fractal_seed == 0) ? rd() : fractal_seed;
     glUniform1ui(glGetUniformLocation(computeShaderProgram, "seed"), current_seed);
     
@@ -295,13 +287,11 @@ bool load_config_states(const std::string& filename, std::vector<std::vector<Tra
             if (settings.count("Width")) SCR_WIDTH = std::stoi(settings.at("Width"));
             if (settings.count("Height")) SCR_HEIGHT = std::stoi(settings.at("Height"));
             if (settings.count("InterpolationDuration")) INTERPOLATION_DURATION = std::stof(settings.at("InterpolationDuration"));
-            if (settings.count("StateDuration")) STATE_DURATION = std::stof(settings.at("StateDuration"));
             if (settings.count("TotalPoints")) TOTAL_POINTS = std::stoll(settings.at("TotalPoints"));
             if (settings.count("Seed")) {
                 // Use stoul for string to unsigned long, which fits unsigned int
                 fractal_seed = std::stoul(settings.at("Seed"));
             }
-
             if (settings.count("AnimationMode")) {
                 std::string mode_str = settings.at("AnimationMode");
                 // Convert to lower case for case-insensitive comparison
@@ -328,6 +318,7 @@ bool load_config_states(const std::string& filename, std::vector<std::vector<Tra
                 const auto& section = pair.second;
                 Transform t;
                 float a=0,b=0,c=0,d=0,e=0,f=0;
+
                 if (section.count("a")) a = std::stof(section.at("a"));
                 if (section.count("b")) b = std::stof(section.at("b"));
                 if (section.count("c")) c = std::stof(section.at("c"));
@@ -358,7 +349,6 @@ bool load_config_states(const std::string& filename, std::vector<std::vector<Tra
                 if(pair.first > 0) out_states[pair.first - 1] = pair.second;
             }
         }
-
     } catch (const std::exception& e) {
         std::cerr << "Error parsing config file: " << e.what() << std::endl;
         return false;
@@ -399,12 +389,14 @@ GLFWwindow* init_window() {
 void create_framebuffer() {
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
     glGenTextures(1, &fbo_texture);
     glBindTexture(GL_TEXTURE_2D, fbo_texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGB, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fbo_texture, 0);
+
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cerr << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!" << std::endl;
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -416,10 +408,12 @@ void create_screen_quad() {
         -1.0f,  1.0f,  0.0f, 1.0f,
         -1.0f, -1.0f,  0.0f, 0.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
+
         -1.0f,  1.0f,  0.0f, 1.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
          1.0f,  1.0f,  1.0f, 1.0f
     };
+
     glGenVertexArrays(1, &quad_vao); 
     glGenBuffers(1, &quad_vbo);
     glBindVertexArray(quad_vao); 
