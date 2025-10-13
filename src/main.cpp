@@ -1,4 +1,5 @@
-// main.cpp
+// src/main.cpp
+
 // A real-time fractal flame renderer configured via an INI file.
 #include <iostream>
 #include <vector>
@@ -7,6 +8,8 @@
 #include <string>
 #include <map>
 #include <sstream>
+#include <filesystem> // Added for file watching
+#include <chrono>     // Added for time points
 
 // Custom INI Parser
 #include "ini.h"
@@ -20,7 +23,8 @@
 #include <gtc/matrix_transform.hpp>
 #include <gtc/type_ptr.hpp>
 
-// --- Configuration (loaded from config.ini) ---
+// --- Configuration ---
+const std::string CONFIG_FILENAME = "config.ini";
 unsigned int SCR_WIDTH = 1280;
 unsigned int SCR_HEIGHT = 720;
 int POINTS_PER_FRAME = 15000;
@@ -63,6 +67,7 @@ const char* pointVertexShaderSource = R"(
         fragColor = aColor;
     }
 )";
+
 const char* pointFragmentShaderSource = R"(
     #version 330 core
     in vec4 fragColor;
@@ -83,6 +88,7 @@ const char* quadVertexShaderSource = R"(
         gl_Position = vec4(aPos.x, aPos.y, 0.0, 1.0);
     }
 )";
+
 const char* quadFragmentShaderSource = R"(
     #version 330 core
     out vec4 FragColor;
@@ -102,6 +108,7 @@ glm::vec2 current_point(0.0f, 0.0f);
 GLuint fbo;
 GLuint fbo_texture;
 GLuint quad_vao, quad_vbo;
+std::filesystem::file_time_type last_config_time;
 
 // --- Function Prototypes ---
 GLFWwindow* init_window();
@@ -111,12 +118,19 @@ void create_screen_quad();
 void apply_variations(glm::vec2& p, Variation var);
 void generate_points();
 bool load_config(const std::string& filename);
+void check_and_reload_config();
 
 // --- Main Function ---
 int main() {
-    if (!load_config("config.ini")) {
-        std::cerr << "Failed to load config.ini" << std::endl;
+    if (!load_config(CONFIG_FILENAME)) {
+        std::cerr << "Failed to load " << CONFIG_FILENAME << std::endl;
         return -1;
+    }
+    
+    try {
+        last_config_time = std::filesystem::last_write_time(CONFIG_FILENAME);
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "Warning: Could not get initial timestamp for " << CONFIG_FILENAME << ". Hot-reloading will be disabled. Error: " << e.what() << std::endl;
     }
 
     GLFWwindow* window = init_window();
@@ -124,7 +138,7 @@ int main() {
 
     unsigned int pointShaderProgram = create_shader_program(pointVertexShaderSource, pointFragmentShaderSource);
     unsigned int quadShaderProgram = create_shader_program(quadVertexShaderSource, quadFragmentShaderSource);
-
+    
     create_framebuffer();
     create_screen_quad();
 
@@ -134,6 +148,7 @@ int main() {
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, POINTS_PER_FRAME * sizeof(Point), nullptr, GL_DYNAMIC_DRAW);
+    
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Point), (void*)0);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Point), (void*)offsetof(Point, color));
@@ -147,19 +162,20 @@ int main() {
 
     // --- Main Render Loop ---
     while (!glfwWindowShouldClose(window)) {
+        check_and_reload_config(); // Check for config changes each frame
+
         glfwPollEvents();
         generate_points();
 
         // 1. Draw points into the FBO
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glUseProgram(pointShaderProgram);
-
         glm::mat4 projection = glm::ortho(-2.0f, 2.0f, -2.0f, 2.0f, -1.0f, 1.0f);
         glUniformMatrix4fv(glGetUniformLocation(pointShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-
+        
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferSubData(GL_ARRAY_BUFFER, 0, points.size() * sizeof(Point), points.data());
-
+        
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Additive blending
         glBindVertexArray(vao);
@@ -189,20 +205,49 @@ int main() {
     glDeleteTextures(1, &fbo_texture);
     glDeleteProgram(pointShaderProgram);
     glDeleteProgram(quadShaderProgram);
-
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
 }
 
 // --- Function Implementations ---
+
+void check_and_reload_config() {
+    try {
+        auto current_config_time = std::filesystem::last_write_time(CONFIG_FILENAME);
+        if (current_config_time > last_config_time) {
+            std::cout << "Detected change in " << CONFIG_FILENAME << ". Reloading..." << std::endl;
+            if (load_config(CONFIG_FILENAME)) {
+                // Reset drawing state
+                current_point = glm::vec2(0.0f, 0.0f);
+                
+                // Clear the framebuffer to start fresh
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+                last_config_time = current_config_time;
+                std::cout << "Reload successful." << std::endl;
+            } else {
+                std::cerr << "Reload failed. Keeping old settings." << std::endl;
+            }
+        }
+    } catch (const std::filesystem::filesystem_error& e) {
+        // File might be in the middle of being saved or was deleted.
+        // This is not critical; we'll just try again next frame.
+    }
+}
+
 bool load_config(const std::string& filename) {
+    transforms.clear(); // Clear old transforms for a clean reload
+
     simpleini::INIReader reader;
     if (!reader.load(filename)) {
         return false;
     }
-    const auto& config_data = reader.get_data();
 
+    const auto& config_data = reader.get_data();
     try {
         if (config_data.count("Settings")) {
             const auto& settings = config_data.at("Settings");
@@ -217,7 +262,6 @@ bool load_config(const std::string& filename) {
             if (!config_data.count(section_name)) {
                 break; // No more transforms
             }
-
             const auto& section = config_data.at(section_name);
             Transform t;
             if (section.count("a")) t.a = std::stof(section.at("a"));
@@ -226,15 +270,14 @@ bool load_config(const std::string& filename) {
             if (section.count("d")) t.d = std::stof(section.at("d"));
             if (section.count("e")) t.e = std::stof(section.at("e"));
             if (section.count("f")) t.f = std::stof(section.at("f"));
-
             if (section.count("color")) {
                 std::stringstream ss(section.at("color"));
-                std::string item;
-                std::getline(ss, item, ','); ss >> t.color.r;
-                std::getline(ss, item, ','); ss >> t.color.g;
-                std::getline(ss, item, ','); ss >> t.color.b;
+                ss >> t.color.r;
+                ss.ignore(); 
+                ss >> t.color.g;
+                ss.ignore();
+                ss >> t.color.b;
             }
-
             if (section.count("variation")) {
                 std::string var_str = section.at("variation");
                 if (variation_map.count(var_str)) {
@@ -250,12 +293,12 @@ bool load_config(const std::string& filename) {
         std::cerr << "Error parsing config file: " << e.what() << std::endl;
         return false;
     }
+
     if (transforms.empty()) {
         std::cerr << "Warning: No transforms loaded from config file." << std::endl;
     }
     return true;
 }
-
 
 void generate_points() {
     static std::random_device rd;
@@ -263,6 +306,7 @@ void generate_points() {
     if (transforms.empty()) return;
 
     std::uniform_int_distribution<> dis(0, transforms.size() - 1);
+    
     points.clear();
     points.reserve(POINTS_PER_FRAME);
 
@@ -272,8 +316,8 @@ void generate_points() {
 
         float x_new = t.a * current_point.x + t.b * current_point.y + t.c;
         float y_new = t.d * current_point.x + t.e * current_point.y + t.f;
-
         glm::vec2 p(x_new, y_new);
+
         apply_variations(p, t.variation);
 
         current_point = p;
@@ -302,9 +346,7 @@ void apply_variations(glm::vec2& p, Variation var) {
         case HORSESHOE: {
             float r = glm::length(p);
             if (r > 1e-6) {
-                float term1 = p.x - p.y;
-                float term2 = p.x + p.y;
-                p.x = (1.0f / r) * term1 * term2;
+                p.x = (1.0f / r) * (p.x - p.y) * (p.x + p.y);
                 p.y = (1.0f / r) * 2.0f * p.x * p.y;
             }
             break;
@@ -339,39 +381,42 @@ GLFWwindow* init_window() {
 }
 
 unsigned int create_shader_program(const char* vs_source, const char* fs_source) {
-    // (This function remains unchanged)
     unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vertexShader, 1, &vs_source, NULL);
     glCompileShader(vertexShader);
+    
     unsigned int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fragmentShader, 1, &fs_source, NULL);
     glCompileShader(fragmentShader);
+    
     unsigned int shaderProgram = glCreateProgram();
     glAttachShader(shaderProgram, vertexShader);
     glAttachShader(shaderProgram, fragmentShader);
     glLinkProgram(shaderProgram);
+    
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
     return shaderProgram;
 }
 
 void create_framebuffer() {
-    // (This function remains unchanged, but now uses global SCR_WIDTH/HEIGHT)
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
     glGenTextures(1, &fbo_texture);
     glBindTexture(GL_TEXTURE_2D, fbo_texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGB, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fbo_texture, 0);
+
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cerr << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!" << std::endl;
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 void create_screen_quad() {
-    // (This function remains unchanged)
     float quadVertices[] = {
         // positions   // texCoords
         -1.0f,  1.0f,  0.0f, 1.0f,
