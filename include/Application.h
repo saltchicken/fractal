@@ -1,15 +1,15 @@
 #pragma once
 
 #include "Shader.h"
-#include "Config.h" 
+#include "Config.h"
 #include <string>
 #include <vector>
 #include <random>
+#include <filesystem> // Required for checking file timestamps
 
 // Using forward declaration for GLFWwindow
 struct GLFWwindow;
 
-// RE-ADD THIS STRUCT
 struct Point {
     glm::vec4 position;
     glm::vec4 color;
@@ -23,6 +23,9 @@ public:
     void run();
 
 private:
+    // Constants
+    static constexpr float HOT_RELOAD_INTERVAL = 1.0f; // Check for changes every 1.0 second
+
     // Initialization steps
     void init_window();
     void create_framebuffer();
@@ -33,6 +36,9 @@ private:
     void process_input();
     void update(float delta_time);
     void render();
+    
+    // New hot-reloading method
+    void check_for_config_updates();
 
     // GPU fractal generation
     void generate_fractal_gpu(const std::vector<Transform>& frame_transforms);
@@ -40,6 +46,10 @@ private:
     // Member variables
     GLFWwindow* m_window = nullptr;
     Config m_config;
+
+    // Hot-reloading state
+    float m_hot_reload_check_timer = 0.0f;
+    std::filesystem::file_time_type m_last_config_write_time;
 
     // OpenGL handles
     GLuint m_fbo, m_fbo_texture, m_quad_vao, m_quad_vbo;

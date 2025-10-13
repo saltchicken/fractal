@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <glad/glad.h>
-#include <GLFW/glfw3.h> // ADD THIS LINE
+#include <GLFW/glfw3.h>
 #include <gtc/matrix_transform.hpp>
 #include <gtc/type_ptr.hpp>
 #include <sstream>
@@ -22,7 +22,6 @@ Application::~Application() {
     glDeleteProgram(m_point_shader_program);
     glDeleteProgram(m_quad_shader_program);
     glDeleteProgram(m_compute_shader_program);
-
     if (m_window) {
         glfwDestroyWindow(m_window);
     }
@@ -35,11 +34,13 @@ void Application::run() {
         std::cerr << "Config load failed or no states found. Please check config.ini" << std::endl;
         return;
     }
+    // Store the initial file timestamp for hot-reloading
+    m_last_config_write_time = std::filesystem::last_write_time("config.ini");
+    m_hot_reload_check_timer = HOT_RELOAD_INTERVAL;
     
     // --- Initialization ---
     init_window();
     if (!m_window) return;
-
     m_point_shader_program = create_shader_program_from_files("shaders/vert/point.vert", "shaders/frag/point.frag");
     m_quad_shader_program = create_shader_program_from_files("shaders/vert/quad.vert", "shaders/frag/quad.frag");
     m_compute_shader_program = create_compute_shader_program_from_file("shaders/comp/fractal.comp");
@@ -54,13 +55,12 @@ void Application::run() {
     
     glGenVertexArrays(1, &m_point_render_vao);
     m_last_frame_time = glfwGetTime();
-
+    
     // --- Main Loop ---
     while (!glfwWindowShouldClose(m_window)) {
         double current_time = glfwGetTime();
         float delta_time = static_cast<float>(current_time - m_last_frame_time);
         m_last_frame_time = current_time;
-
         process_input();
         update(delta_time);
         render();
@@ -75,6 +75,14 @@ void Application::process_input() {
 }
 
 void Application::update(float delta_time) {
+    // Handle hot-reloading check
+    m_hot_reload_check_timer -= delta_time;
+    if (m_hot_reload_check_timer <= 0.0f) {
+        check_for_config_updates();
+        m_hot_reload_check_timer = HOT_RELOAD_INTERVAL; // Reset timer
+    }
+    
+    // Animation interpolation logic
     if (m_config.states.size() > 1) {
         m_interpolation_alpha += delta_time / m_config.interpolation_duration;
         if (m_interpolation_alpha >= 1.0f) {
@@ -109,18 +117,48 @@ void Application::update(float delta_time) {
     }
 }
 
+void Application::check_for_config_updates() {
+    try {
+        auto current_write_time = std::filesystem::last_write_time("config.ini");
+        if (current_write_time > m_last_config_write_time) {
+            m_last_config_write_time = current_write_time;
+            std::cout << "Config file changed, attempting to reload..." << std::endl;
+
+            Config new_config;
+            if (new_config.load("config.ini") && !new_config.states.empty()) {
+                m_config = new_config; // Replace the old config with the new one
+
+                // Gracefully reset the animation
+                m_current_state_index = std::min(m_current_state_index, (int)m_config.states.size() - 1);
+                m_current_state_index = std::max(0, m_current_state_index);
+
+                m_target_transforms = m_config.states[m_current_state_index];
+                m_previous_transforms = m_target_transforms;
+                m_interpolation_alpha = 1.0f;
+
+                // Re-initialize GPU buffers in case TotalPoints changed
+                setup_gpu_compute(); 
+
+                std::cout << "Successfully reloaded config.ini!" << std::endl;
+            } else {
+                std::cerr << "Failed to reload config.ini, keeping old settings." << std::endl;
+            }
+        }
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "Error checking config file: " << e.what() << std::endl;
+    }
+}
+
 void Application::render() {
     std::vector<Transform> interpolated_transforms;
     size_t num_target = m_target_transforms.size();
     size_t num_previous = m_previous_transforms.size();
     size_t render_list_size = std::max(num_target, num_previous);
     interpolated_transforms.reserve(render_list_size);
-
     for (size_t i = 0; i < render_list_size; ++i) {
         bool is_appearing = (i >= num_previous);
         bool is_disappearing = (i >= num_target);
         Transform prev, target;
-
         if (is_disappearing) {
             prev = m_previous_transforms[i];
             target = m_previous_transforms[i];
@@ -133,7 +171,6 @@ void Application::render() {
             prev = m_previous_transforms[i];
             target = m_target_transforms[i];
         }
-
         Transform interpolated;
         interpolated.params1 = glm::mix(prev.params1, target.params1, m_interpolation_alpha);
         interpolated.params2 = glm::mix(prev.params2, target.params2, m_interpolation_alpha);
@@ -142,11 +179,9 @@ void Application::render() {
         
         interpolated_transforms.push_back(interpolated);
     }
-
     if (!interpolated_transforms.empty()) {
         generate_fractal_gpu(interpolated_transforms);
     }
-
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     glViewport(0, 0, m_config.width, m_config.height);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -163,7 +198,6 @@ void Application::render() {
     
     glDisable(GL_BLEND);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(m_quad_shader_program);
@@ -172,7 +206,6 @@ void Application::render() {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
     glDrawArrays(GL_TRIANGLES, 0, 6);
-
     glfwSwapBuffers(m_window);
 }
 
@@ -185,7 +218,6 @@ void Application::init_window() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
-
     m_window = glfwCreateWindow(m_config.width, m_config.height, "GPU Fractal Flame", NULL, NULL);
     if (!m_window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
@@ -234,6 +266,7 @@ void Application::setup_gpu_compute() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_transforms_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, 100 * sizeof(Transform), nullptr, GL_DYNAMIC_DRAW);
     
+    glDeleteBuffers(1, &m_points_ssbo); // Delete old buffer before creating new one
     glGenBuffers(1, &m_points_ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_points_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, m_config.total_points * sizeof(Point), nullptr, GL_STATIC_DRAW);
@@ -241,20 +274,16 @@ void Application::setup_gpu_compute() {
 
 void Application::generate_fractal_gpu(const std::vector<Transform>& frame_transforms) {
     if (frame_transforms.empty()) return;
-
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_transforms_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, frame_transforms.size() * sizeof(Transform), frame_transforms.data(), GL_DYNAMIC_DRAW);
-
     glUseProgram(m_compute_shader_program);
     glUniform1ui(glGetUniformLocation(m_compute_shader_program, "num_transforms"), frame_transforms.size());
     glUniform1ui(glGetUniformLocation(m_compute_shader_program, "total_points"), m_config.total_points);
     
     unsigned int current_seed = (m_config.fractal_seed == 0) ? m_rd() : m_config.fractal_seed;
     glUniform1ui(glGetUniformLocation(m_compute_shader_program, "seed"), current_seed);
-
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, m_transforms_ssbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_points_ssbo);
-
     const unsigned int WORKGROUP_SIZE = 256;
     GLuint num_groups = (m_config.total_points + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
     glDispatchCompute(num_groups, 1, 1);
