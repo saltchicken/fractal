@@ -1,5 +1,4 @@
 #pragma once
-
 #include "Shader.h"
 #include "Config.h"
 #include <string>
@@ -28,10 +27,10 @@ private:
 
     // Initialization steps
     void init_window();
-    void create_framebuffer();
+    void recreate_framebuffer(); // Renamed from create_framebuffer
     void create_screen_quad();
     void setup_gpu_compute();
-    void query_uniform_locations(); // <<< ADDED: New private method
+    void query_uniform_locations();
 
     // Main loop functions
     void process_input();
@@ -44,6 +43,12 @@ private:
     // GPU fractal generation
     void generate_fractal_gpu(const std::vector<Transform>& frame_transforms);
 
+    // --- Callbacks ---
+    // Static callback passed to GLFW
+    static void framebuffer_size_callback(GLFWwindow* window, int width, int height);
+    // Member function to handle the resize logic
+    void on_window_resize(int width, int height);
+
     // Member variables
     GLFWwindow* m_window = nullptr;
     Config m_config;
@@ -53,18 +58,17 @@ private:
     std::filesystem::file_time_type m_last_config_write_time;
 
     // OpenGL handles
-    GLuint m_fbo, m_fbo_texture, m_quad_vao, m_quad_vbo;
-    GLuint m_compute_shader_program, m_point_shader_program, m_quad_shader_program;
-    GLuint m_transforms_ssbo, m_points_ssbo;
-    GLuint m_point_render_vao;
-
+    GLuint m_fbo = 0, m_fbo_texture = 0, m_quad_vao = 0, m_quad_vbo = 0;
+    GLuint m_compute_shader_program = 0, m_point_shader_program = 0, m_quad_shader_program = 0;
+    GLuint m_transforms_ssbo = 0, m_points_ssbo = 0;
+    GLuint m_point_render_vao = 0;
+    
+    // Uniform locations
     GLint m_proj_loc;
     GLint m_res_loc;
-
     GLint m_brightness_loc;
     GLint m_contrast_loc;
     GLint m_gamma_loc;
-
     GLint m_num_transforms_loc;
     GLint m_total_points_loc;
     GLint m_seed_loc;
@@ -77,6 +81,10 @@ private:
     float m_interpolation_alpha = 1.0f;
     double m_last_frame_time = 0.0;
     
+    // Window dimensions
+    unsigned int m_width = 0;
+    unsigned int m_height = 0;
+
     // Random number generator
     std::random_device m_rd;
     std::mt19937 m_rd_generator;

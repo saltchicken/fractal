@@ -8,6 +8,32 @@
 #include <gtc/type_ptr.hpp>
 #include <sstream>
 
+// --- Callback Implementations ---
+// Static function passed to GLFW, which calls the member function
+void Application::framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+    auto* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
+    if (app) {
+        app->on_window_resize(width, height);
+    }
+}
+
+// Member function that contains the actual resizing logic
+void Application::on_window_resize(int width, int height) {
+    // Avoid resizing to 0x0 which can happen on minimization
+    if (width == 0 || height == 0) {
+        return;
+    }
+    m_width = static_cast<unsigned int>(width);
+    m_height = static_cast<unsigned int>(height);
+
+    // Update the OpenGL viewport and recreate the framebuffer
+    glViewport(0, 0, m_width, m_height);
+    recreate_framebuffer();
+    
+    std::cout << "Window resized to " << m_width << "x" << m_height << std::endl;
+}
+
+
 Application::Application() : m_rd_generator(m_rd()) {}
 
 Application::~Application() {
@@ -45,7 +71,7 @@ void Application::run() {
     
     query_uniform_locations(); // Query locations after creating shaders
     
-    create_framebuffer();
+    recreate_framebuffer(); // Changed from create_framebuffer
     create_screen_quad();
     setup_gpu_compute();
     
@@ -132,6 +158,12 @@ void Application::check_for_config_updates() {
                 m_target_transforms = m_config.getStates()[m_current_state_index];
                 m_previous_transforms = m_target_transforms;
                 m_interpolation_alpha = 1.0f;
+
+                // If window dimensions changed in config, resize the window
+                if (m_width != m_config.getWidth() || m_height != m_config.getHeight()) {
+                    glfwSetWindowSize(m_window, m_config.getWidth(), m_config.getHeight());
+                }
+
                 // Re-initialize GPU buffers in case TotalPoints changed
                 setup_gpu_compute(); 
                 std::cout << "Successfully reloaded config.ini!" << std::endl;
@@ -150,10 +182,12 @@ void Application::render() {
     size_t num_previous = m_previous_transforms.size();
     size_t render_list_size = std::max(num_target, num_previous);
     interpolated_transforms.reserve(render_list_size);
+
     for (size_t i = 0; i < render_list_size; ++i) {
         bool is_appearing = (i >= num_previous);
         bool is_disappearing = (i >= num_target);
         Transform prev, target;
+
         if (is_disappearing) {
             prev = m_previous_transforms[i];
             target = m_previous_transforms[i];
@@ -166,6 +200,7 @@ void Application::render() {
             prev = m_previous_transforms[i];
             target = m_target_transforms[i];
         }
+
         Transform interpolated;
         interpolated.params1 = glm::mix(prev.params1, target.params1, m_interpolation_alpha);
         interpolated.params2 = glm::mix(prev.params2, target.params2, m_interpolation_alpha);
@@ -174,23 +209,24 @@ void Application::render() {
         
         interpolated_transforms.push_back(interpolated);
     }
+
     if (!interpolated_transforms.empty()) {
         generate_fractal_gpu(interpolated_transforms);
     }
+
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-    glViewport(0, 0, m_config.getWidth(), m_config.getHeight());
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
+
     glUseProgram(m_point_shader_program);
     float zoom = m_config.getCameraZoom();
     float x_offset = m_config.getCameraX();
     float y_offset = m_config.getCameraY();
-
-    float aspect_ratio = (float)m_config.getWidth() / (float)m_config.getHeight();
+    // Use current window dimensions for aspect ratio
+    float aspect_ratio = (float)m_width / (float)m_height;
     // Use a small epsilon to prevent division by zero if zoom is 0
     float half_height = 2.0f / (zoom < 1e-6f ? 1e-6f : zoom);
     float half_width = half_height * aspect_ratio;
-
     glm::mat4 projection = glm::ortho(
         -half_width - x_offset, half_width - x_offset,
         -half_height - y_offset, half_height - y_offset,
@@ -205,12 +241,14 @@ void Application::render() {
     glDrawArrays(GL_POINTS, 0, (GLsizei)m_config.getTotalPoints());
     
     glDisable(GL_BLEND);
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    glUseProgram(m_quad_shader_program);
-    glUniform2f(m_res_loc, (float)m_config.getWidth(), (float)m_config.getHeight());
 
+    glUseProgram(m_quad_shader_program);
+    // Use current window dimensions for resolution uniform
+    glUniform2f(m_res_loc, (float)m_width, (float)m_height);
     glUniform1f(m_brightness_loc, m_config.getBrightness());
     glUniform1f(m_contrast_loc, m_config.getContrast());
     glUniform1f(m_gamma_loc, m_config.getGamma());
@@ -219,6 +257,7 @@ void Application::render() {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
     glDrawArrays(GL_TRIANGLES, 0, 6);
+
     glfwSwapBuffers(m_window);
 }
 
@@ -231,30 +270,50 @@ void Application::init_window() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
-    m_window = glfwCreateWindow(m_config.getWidth(), m_config.getHeight(), "GPU Fractal Flame", NULL, NULL);
+
+    // Initialize window dimensions from config
+    m_width = m_config.getWidth();
+    m_height = m_config.getHeight();
+
+    m_window = glfwCreateWindow(m_width, m_height, "GPU Fractal Flame", NULL, NULL);
     if (!m_window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
         return;
     }
     
+    // Set user pointer and register resize callback
+    glfwSetWindowUserPointer(m_window, this);
+    glfwSetFramebufferSizeCallback(m_window, framebuffer_size_callback);
+
     glfwMakeContextCurrent(m_window);
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cerr << "Failed to initialize GLAD" << std::endl;
         return;
     }
     
+    // Set the initial viewport
+    glViewport(0, 0, m_width, m_height);
+    
     glEnable(GL_PROGRAM_POINT_SIZE);
 }
 
-void Application::create_framebuffer() {
+void Application::recreate_framebuffer() {
+    // Delete old resources if they exist
+    if (m_fbo) glDeleteFramebuffers(1, &m_fbo);
+    if (m_fbo_texture) glDeleteTextures(1, &m_fbo_texture);
+
     glGenFramebuffers(1, &m_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     glGenTextures(1, &m_fbo_texture);
     glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, m_config.getWidth(), m_config.getHeight(), 0, GL_RGBA, GL_FLOAT, NULL);
+    // Use current window dimensions to create the texture
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, m_width, m_height, 0, GL_RGBA, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_fbo_texture, 0);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cerr << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!" << std::endl;
@@ -279,7 +338,7 @@ void Application::setup_gpu_compute() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_transforms_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, 100 * sizeof(Transform), nullptr, GL_DYNAMIC_DRAW);
     
-    glDeleteBuffers(1, &m_points_ssbo); // Delete old buffer before creating new one
+    if (m_points_ssbo) glDeleteBuffers(1, &m_points_ssbo); // Delete old buffer before creating new one
     glGenBuffers(1, &m_points_ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_points_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, m_config.getTotalPoints() * sizeof(Point), nullptr, GL_STATIC_DRAW);
@@ -289,7 +348,6 @@ void Application::query_uniform_locations() {
     // Graphics program uniforms
     m_proj_loc = glGetUniformLocation(m_point_shader_program, "projection");
     m_res_loc = glGetUniformLocation(m_quad_shader_program, "u_resolution");
-
     m_brightness_loc = glGetUniformLocation(m_quad_shader_program, "u_brightness");
     m_contrast_loc = glGetUniformLocation(m_quad_shader_program, "u_contrast");
     m_gamma_loc = glGetUniformLocation(m_quad_shader_program, "u_gamma");
@@ -314,8 +372,10 @@ void Application::generate_fractal_gpu(const std::vector<Transform>& frame_trans
     unsigned int current_seed = (m_config.getFractalSeed() == 0) ? m_rd() : m_config.getFractalSeed();
     
     glUniform1ui(m_seed_loc, current_seed);
+
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, m_transforms_ssbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_points_ssbo);
+
     const unsigned int WORKGROUP_SIZE = 256;
     GLuint num_groups = (GLuint)(m_config.getTotalPoints() + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
     glDispatchCompute(num_groups, 1, 1);
