@@ -1,9 +1,23 @@
 #include "Config.h"
-#include "ini.h"
 #include <iostream>
-#include <map>
+#include <fstream>
 #include <sstream>
+#include <map>
 #include <algorithm>
+#include <cctype>
+
+// Anonymous namespace to hold the helper function, keeping it private to this file.
+namespace {
+    // Helper function to trim whitespace from both ends of a string
+    void trim(std::string &s) {
+        s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }));
+        s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }).base(), s.end());
+    }
+}
 
 // Map to convert string variations from the config file to the Variation enum
 const std::map<std::string, Variation> variation_map = {
@@ -13,15 +27,41 @@ const std::map<std::string, Variation> variation_map = {
 
 bool Config::load(const std::string& filename) {
     states.clear();
-    simpleini::INIReader reader;
-    if (!reader.load(filename)) {
+
+    // --- INI parsing logic is now integrated here ---
+    std::map<std::string, std::map<std::string, std::string>> config_data;
+    std::ifstream file(filename);
+    if (!file.is_open()) {
         std::cerr << "Failed to load " << filename << std::endl;
         return false;
     }
 
-    const auto& config_data = reader.get_data();
-    std::map<int, std::vector<Transform>> state_map;
+    std::string line;
+    std::string current_section;
+    while (std::getline(file, line)) {
+        trim(line);
+        if (line.empty() || line[0] == ';' || line[0] == '#') {
+            continue; // Skip comments and empty lines
+        }
+        if (line[0] == '[' && line.back() == ']') {
+            current_section = line.substr(1, line.length() - 2);
+            trim(current_section);
+        } else {
+            size_t equals_pos = line.find('=');
+            if (equals_pos != std::string::npos) {
+                std::string key = line.substr(0, equals_pos);
+                std::string value = line.substr(equals_pos + 1);
+                trim(key);
+                trim(value);
+                if (!current_section.empty()) {
+                    config_data[current_section][key] = value;
+                }
+            }
+        }
+    }
+    // --- End of integrated INI parsing ---
 
+    std::map<int, std::vector<Transform>> state_map;
     try {
         if (config_data.count("Settings")) {
             const auto& settings = config_data.at("Settings");
@@ -47,7 +87,6 @@ bool Config::load(const std::string& filename) {
                 size_t dot_pos = temp.find('.');
                 if (dot_pos == std::string::npos) continue;
                 int state_num = std::stoi(temp.substr(0, dot_pos));
-
                 const auto& section = pair.second;
                 Transform t;
                 float a=0,b=0,c=0,d=0,e=0,f=0;
@@ -59,7 +98,6 @@ bool Config::load(const std::string& filename) {
                 if (section.count("f")) f = std::stof(section.at("f"));
                 t.params1 = glm::vec4(a,b,c,d);
                 t.params2 = glm::vec4(e,f,0,0);
-
                 if (section.count("color")) {
                     glm::vec3 color_vec;
                     std::stringstream ss(section.at("color"));
