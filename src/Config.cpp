@@ -92,6 +92,12 @@ void Config::handle_camera(const std::string& name, const std::string& value) {
     else if (name == "zoom") camera_zoom = std::stof(value);
 }
 
+void Config::handle_post_processing(const std::string& name, const std::string& value) {
+    if (name == "Brightness") post_brightness = std::stof(value);
+    else if (name == "Contrast") post_contrast = std::stof(value);
+    else if (name == "Gamma") post_gamma = std::stof(value);
+}
+
 void Config::handle_transform(const std::string& section, const std::string& name, const std::string& value) {
     int state_num, transform_num;
     if (sscanf(section.c_str(), "State.%d.Transform.%d", &state_num, &transform_num) != 2) return;
@@ -133,8 +139,10 @@ int Config::handler(void* user, const char* section, const char* name, const cha
     Config* pconfig = static_cast<Config*>(user);
     if (strcmp(section, "Settings") == 0) {
         pconfig->handle_settings(name, value);
-    } else if (strcmp(section, "Camera") == 0) { // Add this else if block
+    } else if (strcmp(section, "Camera") == 0) {
         pconfig->handle_camera(name, value);
+    } else if (strcmp(section, "PostProcessing") == 0) { // Add this else if block
+        pconfig->handle_post_processing(name, value);
     } else if (strncmp(section, "State.", 6) == 0) {
         pconfig->handle_transform(section, name, value);
     }

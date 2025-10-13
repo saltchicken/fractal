@@ -58,9 +58,13 @@ private:
     GLuint m_transforms_ssbo, m_points_ssbo;
     GLuint m_point_render_vao;
 
-    // <<< ADDED: Cached Uniform Locations
     GLint m_proj_loc;
     GLint m_res_loc;
+
+    GLint m_brightness_loc;
+    GLint m_contrast_loc;
+    GLint m_gamma_loc;
+
     GLint m_num_transforms_loc;
     GLint m_total_points_loc;
     GLint m_seed_loc;

@@ -5,9 +5,13 @@ in vec2 TexCoords;
 uniform sampler2D screenTexture;
 uniform vec2 u_resolution;
 
+// Post-processing uniforms
+uniform float u_brightness;
+uniform float u_contrast;
+uniform float u_gamma;
+
 // --- Tunable FXAA Parameters ---
 #define FXAA_CONTRAST_THRESHOLD 0.083
-
 // --- End of Parameters ---
 
 float rgb_to_luma(vec3 rgb) {
@@ -16,58 +20,58 @@ float rgb_to_luma(vec3 rgb) {
 
 void main() {
     vec2 inv_res = 1.0 / u_resolution;
-
-    // --- FXAA ---
-    // 1. Sample the center pixel and its neighbors
-    // CHANGE 3: Sample the full RGBA color, not just RGB
     vec4 color_center_rgba = texture(screenTexture, TexCoords);
     vec3 color_center = color_center_rgba.rgb;
     float luma_center = rgb_to_luma(color_center);
 
+    // --- FXAA ---
     float luma_down = rgb_to_luma(texture(screenTexture, TexCoords + vec2(0.0, -inv_res.y)).rgb);
     float luma_up = rgb_to_luma(texture(screenTexture, TexCoords + vec2(0.0, inv_res.y)).rgb);
     float luma_left = rgb_to_luma(texture(screenTexture, TexCoords + vec2(-inv_res.x, 0.0)).rgb);
     float luma_right = rgb_to_luma(texture(screenTexture, TexCoords + vec2(inv_res.x, 0.0)).rgb);
 
-    // 2. Find the direction of the steepest gradient (the edge)
     float luma_min = min(luma_center, min(min(luma_down, luma_up), min(luma_left, luma_right)));
     float luma_max = max(luma_center, max(max(luma_down, luma_up), max(luma_left, luma_right)));
     
-    // 3. If contrast is too low, it's not an edge, so exit
+    vec3 final_rgb;
+
     if (luma_max - luma_min < luma_max * FXAA_CONTRAST_THRESHOLD) {
-        // CHANGE 4: Output the original RGBA color, preserving alpha
-        FragColor = color_center_rgba;
-        return;
-    }
-
-    // 4. Sample corner pixels
-    float luma_down_left = rgb_to_luma(texture(screenTexture, TexCoords + vec2(-inv_res.x, -inv_res.y)).rgb);
-    float luma_up_right = rgb_to_luma(texture(screenTexture, TexCoords + vec2(inv_res.x, inv_res.y)).rgb);
-    float luma_up_left = rgb_to_luma(texture(screenTexture, TexCoords + vec2(-inv_res.x, inv_res.y)).rgb);
-    float luma_down_right = rgb_to_luma(texture(screenTexture, TexCoords + vec2(inv_res.x, -inv_res.y)).rgb);
-
-    // 5. Determine edge direction and blend amount
-    vec2 dir;
-    dir.x = -((luma_up_left + luma_up_right) - (luma_down_left + luma_down_right));
-    dir.y =  ((luma_up_left + luma_down_left) - (luma_up_right + luma_down_right));
-    
-    float dir_reduce = max((luma_down_left + luma_up_right + luma_up_left + luma_down_right) * (0.25 * 0.5), 1.0 / 16.0);
-    float rcp_dir_min = 1.0 / (min(abs(dir.x), abs(dir.y)) + dir_reduce);
-    
-    dir = min(vec2(8.0), max(vec2(-8.0), dir * rcp_dir_min)) * inv_res;
-
-    // 6. Sample along the calculated direction and average
-    vec3 result1 = texture(screenTexture, TexCoords + dir * (1.0/3.0 - 0.5)).rgb;
-    vec3 result2 = texture(screenTexture, TexCoords + dir * (2.0/3.0 - 0.5)).rgb;
-    vec3 blended_color = (result1 + result2) * 0.5;
-
-    // 7. Choose the final color and combine with original alpha
-    float luma_avg = rgb_to_luma(blended_color);
-    if (luma_avg < luma_min || luma_avg > luma_max) {
-        // CHANGE 5: Output the original RGBA color
-        FragColor = color_center_rgba;
+        final_rgb = color_center; // Not an edge, use original color
     } else {
-        // CHANGE 6: Combine the anti-aliased RGB with the original alpha
-        FragColor = vec4(blended_color, color_center_rgba.a);
+        float luma_down_left = rgb_to_luma(texture(screenTexture, TexCoords + vec2(-inv_res.x, -inv_res.y)).rgb);
+        float luma_up_right = rgb_to_luma(texture(screenTexture, TexCoords + vec2(inv_res.x, inv_res.y)).rgb);
+        float luma_up_left = rgb_to_luma(texture(screenTexture, TexCoords + vec2(-inv_res.x, inv_res.y)).rgb);
+        float luma_down_right = rgb_to_luma(texture(screenTexture, TexCoords + vec2(inv_res.x, -inv_res.y)).rgb);
+
+        vec2 dir;
+        dir.x = -((luma_up_left + luma_up_right) - (luma_down_left + luma_down_right));
+        dir.y =  ((luma_up_left + luma_down_left) - (luma_up_right + luma_down_right));
+        
+        float dir_reduce = max((luma_down_left + luma_up_right + luma_up_left + luma_down_right) * 0.125, 1.0 / 16.0);
+        float rcp_dir_min = 1.0 / (min(abs(dir.x), abs(dir.y)) + dir_reduce);
+        
+        dir = min(vec2(8.0), max(vec2(-8.0), dir * rcp_dir_min)) * inv_res;
+
+        vec3 result1 = texture(screenTexture, TexCoords + dir * (1.0/3.0 - 0.5)).rgb;
+        vec3 result2 = texture(screenTexture, TexCoords + dir * (2.0/3.0 - 0.5)).rgb;
+        vec3 blended_color = (result1 + result2) * 0.5;
+
+        float luma_avg = rgb_to_luma(blended_color);
+        if (luma_avg < luma_min || luma_avg > luma_max) {
+            final_rgb = color_center;
+        } else {
+            final_rgb = blended_color;
+        }
     }
+
+    // --- Post-Processing ---
+    // 1. Contrast: Adjusts the range of tones
+    final_rgb = (final_rgb - 0.5) * u_contrast + 0.5;
+    // 2. Brightness: Makes the image lighter or darker
+    final_rgb *= u_brightness;
+    // 3. Gamma Correction: Adjusts for display characteristics
+    final_rgb = pow(final_rgb, vec3(1.0 / u_gamma));
+    
+    // Combine final RGB with original alpha
+    FragColor = vec4(clamp(final_rgb, 0.0, 1.0), color_center_rgba.a);
 }

@@ -27,9 +27,15 @@ public:
     // Accessors
     unsigned int getWidth() const { return width; }
     unsigned int getHeight() const { return height; }
+
     float getCameraX() const { return camera_x; }
     float getCameraY() const { return camera_y; }
     float getCameraZoom() const { return camera_zoom; }
+
+    float getBrightness() const { return post_brightness; }
+    float getContrast() const { return post_contrast; }
+    float getGamma() const { return post_gamma; }
+
     long long getTotalPoints() const { return total_points; }
     float getInterpolationDuration() const { return interpolation_duration; }
     unsigned int getFractalSeed() const { return fractal_seed; }
@@ -40,9 +46,15 @@ private:
     // Settings
     unsigned int width = 1280;
     unsigned int height = 720;
+
     float camera_x = 0.0f;
     float camera_y = 0.0f;
     float camera_zoom = 1.0f;
+
+    float post_brightness = 1.0f;
+    float post_contrast = 1.0f;
+    float post_gamma = 1.2f;
+
     long long total_points = 500000;
     float interpolation_duration = 2.0f;
     unsigned int fractal_seed = 0;
@@ -58,6 +70,7 @@ private:
     float parse_float_or_random(const std::string& value_str);
     void handle_settings(const std::string& name, const std::string& value);
     void handle_camera(const std::string& name, const std::string& value); // Add this line
+    void handle_post_processing(const std::string& name, const std::string& value); // Add this
     void handle_transform(const std::string& section, const std::string& name, const std::string& value);
 
     // The static callback for ini_parse

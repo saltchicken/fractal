@@ -210,6 +210,11 @@ void Application::render() {
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(m_quad_shader_program);
     glUniform2f(m_res_loc, (float)m_config.getWidth(), (float)m_config.getHeight());
+
+    glUniform1f(m_brightness_loc, m_config.getBrightness());
+    glUniform1f(m_contrast_loc, m_config.getContrast());
+    glUniform1f(m_gamma_loc, m_config.getGamma());
+
     glBindVertexArray(m_quad_vao);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
@@ -284,6 +289,11 @@ void Application::query_uniform_locations() {
     // Graphics program uniforms
     m_proj_loc = glGetUniformLocation(m_point_shader_program, "projection");
     m_res_loc = glGetUniformLocation(m_quad_shader_program, "u_resolution");
+
+    m_brightness_loc = glGetUniformLocation(m_quad_shader_program, "u_brightness");
+    m_contrast_loc = glGetUniformLocation(m_quad_shader_program, "u_contrast");
+    m_gamma_loc = glGetUniformLocation(m_quad_shader_program, "u_gamma");
+
     // Compute program uniforms
     m_num_transforms_loc = glGetUniformLocation(m_compute_shader_program, "num_transforms");
     m_total_points_loc = glGetUniformLocation(m_compute_shader_program, "total_points");
