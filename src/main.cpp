@@ -102,17 +102,27 @@ int main() {
 
         glfwPollEvents();
 
-        // --- Animation & State Change Logic ---
-        if (config_states.size() > 1) { // Only animate if there's more than one state
+        // --- NEW: Corrected Interpolation & State Change Logic ---
+        // First, handle interpolation. This runs while we are in transition.
+        if (interpolation_alpha < 1.0f) {
+            interpolation_alpha += delta_time / INTERPOLATION_DURATION;
+            // When the transition finishes, clamp the value and reset the state timer
+            // so the new pause can begin.
+            if (interpolation_alpha >= 1.0f) {
+                interpolation_alpha = 1.0f;
+                state_timer = 0.0f; 
+            }
+        } 
+        // If we are NOT in transition, run the pause timer.
+        else if (config_states.size() > 1) {
             state_timer += delta_time;
-            // Check if it's time to switch and the last transition is finished
-            if (state_timer >= STATE_DURATION && interpolation_alpha >= 1.0f) {
-                state_timer = 0.0f;
 
+            // If the pause duration has been met, trigger the next transition.
+            if (state_timer >= STATE_DURATION) {
                 // Set the current state as the starting point for interpolation
                 previous_transforms = config_states[current_state_index];
 
-                // --- NEW: Simplified Ping-Pong Logic ---
+                // Ping-Pong Logic
                 int next_state_index = current_state_index + animation_direction;
                 if (next_state_index >= config_states.size() || next_state_index < 0) {
                     animation_direction *= -1; // Reverse direction
@@ -125,12 +135,6 @@ int main() {
                 interpolation_alpha = 0.0f;
                 std::cout << "Animating to state " << (current_state_index + 1) << "..." << std::endl;
             }
-        }
-        
-        // --- Interpolation Logic (runs every frame) ---
-        if (interpolation_alpha < 1.0f) {
-            interpolation_alpha += delta_time / INTERPOLATION_DURATION;
-            interpolation_alpha = std::min(1.0f, interpolation_alpha);
         }
         
         std::vector<Transform> interpolated_transforms;
@@ -195,9 +199,7 @@ int main() {
         glClear(GL_COLOR_BUFFER_BIT);
         
         glUseProgram(quadShaderProgram);
-        
         glUniform2f(glGetUniformLocation(quadShaderProgram, "u_resolution"), (float)SCR_WIDTH, (float)SCR_HEIGHT);
-
         glBindVertexArray(quad_vao);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, fbo_texture);
