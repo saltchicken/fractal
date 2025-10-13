@@ -49,7 +49,7 @@ struct Transform {
 std::vector<Transform> previous_transforms;
 std::vector<Transform> target_transforms;
 float interpolation_alpha = 1.0f; // 0.0 = previous, 1.0 = target
-const float INTERPOLATION_DURATION = 0.75f; // seconds
+float INTERPOLATION_DURATION = 2.0f; // seconds
 
 std::filesystem::file_time_type last_config_time;
 std::random_device rd;
@@ -253,6 +253,8 @@ bool load_config(const std::string& filename, std::vector<Transform>& out_transf
             if (settings.count("Width")) SCR_WIDTH = std::stoi(settings.at("Width"));
             if (settings.count("Height")) SCR_HEIGHT = std::stoi(settings.at("Height"));
             
+            if (settings.count("InterpolationDuration")) INTERPOLATION_DURATION = std::stof(settings.at("InterpolationDuration"));
+
             long long new_total_points = TOTAL_POINTS;
             if (settings.count("TotalPoints")) new_total_points = std::stoll(settings.at("TotalPoints"));
             
