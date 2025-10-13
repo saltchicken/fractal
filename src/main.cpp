@@ -30,13 +30,11 @@ struct Point {
     glm::vec4 position; // .xy = position, .zw unused
     glm::vec4 color;
 };
-
 enum Variation { LINEAR, SINUSOIDAL, SPHERICAL, SWIRL, HORSESHOE };
 const std::map<std::string, Variation> variation_map = {
     {"LINEAR", LINEAR}, {"SINUSOIDAL", SINUSOIDAL}, {"SPHERICAL", SPHERICAL},
     {"SWIRL", SWIRL}, {"HORSESHOE", HORSESHOE}
 };
-
 struct Transform {
     glm::vec4 params1{}; // x=a, y=b, z=c, w=d
     glm::vec4 params2{}; // x=e, y=f
@@ -45,28 +43,31 @@ struct Transform {
 };
 
 // --- Global State ---
-// NEW: State management for interpolation
+// State management for interpolation and animation
 std::vector<Transform> previous_transforms;
 std::vector<Transform> target_transforms;
-float interpolation_alpha = 1.0f; // 0.0 = previous, 1.0 = target
-float INTERPOLATION_DURATION = 2.0f; // seconds
+std::vector<std::vector<Transform>> config_states; // Holds all presets from config.ini
+int current_state_index = 0;
+int animation_direction = 1; // 1 for forward, -1 for backward
 
-std::filesystem::file_time_type last_config_time;
+float interpolation_alpha = 1.0f; // 0.0 = previous, 1.0 = target
+float state_timer = 0.0f;
+float INTERPOLATION_DURATION = 2.0f; // seconds
+float STATE_DURATION = 10.0f; // seconds
+
 std::random_device rd;
 GLuint fbo, fbo_texture, quad_vao, quad_vbo;
 GLuint computeShaderProgram, pointShaderProgram;
 GLuint transforms_ssbo, points_ssbo;
-GLuint timer_query;
 double last_frame_time = 0.0;
 
 // --- Function Prototypes ---
-bool check_and_handle_config_changes();
-void generate_fractal_gpu(const std::vector<Transform>& frame_transforms); // MODIFIED
+void generate_fractal_gpu(const std::vector<Transform>& frame_transforms);
 GLFWwindow* init_window();
 void create_framebuffer();
 void create_screen_quad();
 void setup_gpu_compute();
-bool load_config(const std::string& filename, std::vector<Transform>& out_transforms); // MODIFIED
+bool load_config_states(const std::string& filename, std::vector<std::vector<Transform>>& out_states);
 
 int main() {
     GLFWwindow* window = init_window();
@@ -75,23 +76,24 @@ int main() {
     pointShaderProgram = create_shader_program_from_files("shaders/point.vert", "shaders/point.frag");
     unsigned int quadShaderProgram = create_shader_program_from_files("shaders/quad.vert", "shaders/quad.frag");
     computeShaderProgram = create_compute_shader_program_from_file("shaders/fractal.comp");
-
     create_framebuffer();
     create_screen_quad();
     setup_gpu_compute();
     
-    glGenQueries(1, &timer_query);
-    
-    // Initial config load
-    if (!load_config(CONFIG_FILENAME, target_transforms)) {
-        std::cerr << "Initial config load failed. Please ensure " << CONFIG_FILENAME << " exists." << std::endl;
+    // Load config states again now that GL is initialized. This is slightly redundant but safe.
+    if (!load_config_states(CONFIG_FILENAME, config_states) || config_states.empty()) {
+        std::cerr << "Config load failed or no states found. Please check " << CONFIG_FILENAME << std::endl;
+        glfwTerminate();
+        return -1;
     }
+    
+    target_transforms = config_states[0];
     previous_transforms = target_transforms; // Start with both states identical
     
     GLuint vao;
     glGenVertexArrays(1, &vao);
-
     last_frame_time = glfwGetTime();
+
     while (!glfwWindowShouldClose(window)) {
         // --- Delta Time Calculation ---
         double current_time = glfwGetTime();
@@ -99,7 +101,31 @@ int main() {
         last_frame_time = current_time;
 
         glfwPollEvents();
-        check_and_handle_config_changes();
+
+        // --- Animation & State Change Logic ---
+        if (config_states.size() > 1) { // Only animate if there's more than one state
+            state_timer += delta_time;
+            // Check if it's time to switch and the last transition is finished
+            if (state_timer >= STATE_DURATION && interpolation_alpha >= 1.0f) {
+                state_timer = 0.0f;
+
+                // Set the current state as the starting point for interpolation
+                previous_transforms = config_states[current_state_index];
+
+                // --- NEW: Simplified Ping-Pong Logic ---
+                int next_state_index = current_state_index + animation_direction;
+                if (next_state_index >= config_states.size() || next_state_index < 0) {
+                    animation_direction *= -1; // Reverse direction
+                    next_state_index = current_state_index + animation_direction;
+                }
+                current_state_index = next_state_index;
+                
+                // Set the new target state and start the interpolation
+                target_transforms = config_states[current_state_index];
+                interpolation_alpha = 0.0f;
+                std::cout << "Animating to state " << (current_state_index + 1) << "..." << std::endl;
+            }
+        }
         
         // --- Interpolation Logic (runs every frame) ---
         if (interpolation_alpha < 1.0f) {
@@ -116,21 +142,17 @@ int main() {
         for (size_t i = 0; i < render_list_size; ++i) {
             bool is_appearing = (i >= num_previous);
             bool is_disappearing = (i >= num_target);
-
             Transform prev, target;
 
             if (is_disappearing) {
-                // Fading out: The target is itself but with zero alpha.
                 prev = previous_transforms[i];
                 target = previous_transforms[i]; 
                 target.color.a = 0.0f;
             } else if (is_appearing) {
-                // Fading in: The previous state is the target but with zero alpha.
                 target = target_transforms[i];
                 prev = target_transforms[i]; 
                 prev.color.a = 0.0f;
             } else {
-                // Standard interpolation.
                 prev = previous_transforms[i];
                 target = target_transforms[i];
             }
@@ -151,9 +173,11 @@ int main() {
 
         // --- Render Pass: Draw the generated points to the FBO ---
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(pointShaderProgram);
+
         glm::mat4 projection = glm::ortho(-2.0f, 2.0f, -2.0f, 2.0f, -1.0f, 1.0f);
         glUniformMatrix4fv(glGetUniformLocation(pointShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         
@@ -175,8 +199,10 @@ int main() {
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, fbo_texture);
         glDrawArrays(GL_TRIANGLES, 0, 6);
+
         glfwSwapBuffers(window);
     }
+
     // --- Cleanup ---
     glDeleteVertexArrays(1, &vao);
     glDeleteVertexArrays(1, &quad_vao);
@@ -188,25 +214,17 @@ int main() {
     glDeleteProgram(pointShaderProgram);
     glDeleteProgram(quadShaderProgram);
     glDeleteProgram(computeShaderProgram);
-    glDeleteQueries(1, &timer_query);
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
 }
 
-// MODIFIED: Accepts transforms for the current frame
 void generate_fractal_gpu(const std::vector<Transform>& frame_transforms) {
     if (frame_transforms.empty()) return;
-    // The console output can be noisy, so it's commented out for continuous generation.
-    // std::cout << "Dispatching GPU to generate " << TOTAL_POINTS << " points..." << std::flush;
     
-    // glBeginQuery(GL_TIME_ELAPSED, timer_query);
-
-    // Update the transforms buffer on the GPU
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, transforms_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, frame_transforms.size() * sizeof(Transform), frame_transforms.data(), GL_DYNAMIC_DRAW);
     
-    // Run the compute shader
     glUseProgram(computeShaderProgram);
     glUniform1ui(glGetUniformLocation(computeShaderProgram, "num_transforms"), frame_transforms.size());
     glUniform1ui(glGetUniformLocation(computeShaderProgram, "total_points"), TOTAL_POINTS);
@@ -215,16 +233,10 @@ void generate_fractal_gpu(const std::vector<Transform>& frame_transforms) {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, transforms_ssbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, points_ssbo);
     
-    // Dispatch the work
     GLuint num_groups = (TOTAL_POINTS + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
     glDispatchCompute(num_groups, 1, 1);
     
-    // Ensure compute shader finishes before we render the points
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-    
-    // Timing queries can add overhead and stalls; not ideal for the render loop.
-    // glEndQuery(GL_TIME_ELAPSED);
-    // ... timing query result retrieval would go here ...
 }
 
 void setup_gpu_compute() {
@@ -234,12 +246,13 @@ void setup_gpu_compute() {
 
     glGenBuffers(1, &points_ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, points_ssbo);
+    // This now correctly uses the TOTAL_POINTS value loaded from the config file in init_window()
     glBufferData(GL_SHADER_STORAGE_BUFFER, TOTAL_POINTS * sizeof(Point), nullptr, GL_STATIC_DRAW);
 }
 
-// MODIFIED: Now populates a specific vector passed to it
-bool load_config(const std::string& filename, std::vector<Transform>& out_transforms) {
-    out_transforms.clear();
+// CRASH FIX: This function no longer makes any OpenGL calls.
+bool load_config_states(const std::string& filename, std::vector<std::vector<Transform>>& out_states) {
+    out_states.clear();
     simpleini::INIReader reader;
     if (!reader.load(filename)) { 
         std::cerr << "Failed to load " << filename << std::endl;
@@ -247,80 +260,66 @@ bool load_config(const std::string& filename, std::vector<Transform>& out_transf
     }
     
     const auto& config_data = reader.get_data();
+    std::map<int, std::vector<Transform>> state_map;
+
     try {
         if (config_data.count("Settings")) {
             const auto& settings = config_data.at("Settings");
             if (settings.count("Width")) SCR_WIDTH = std::stoi(settings.at("Width"));
             if (settings.count("Height")) SCR_HEIGHT = std::stoi(settings.at("Height"));
-            
             if (settings.count("InterpolationDuration")) INTERPOLATION_DURATION = std::stof(settings.at("InterpolationDuration"));
-
-            long long new_total_points = TOTAL_POINTS;
-            if (settings.count("TotalPoints")) new_total_points = std::stoll(settings.at("TotalPoints"));
-            
-            if (new_total_points != TOTAL_POINTS) {
-                TOTAL_POINTS = new_total_points;
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, points_ssbo);
-                glBufferData(GL_SHADER_STORAGE_BUFFER, TOTAL_POINTS * sizeof(Point), nullptr, GL_STATIC_DRAW);
-                std::cout << "Total points changed to " << TOTAL_POINTS << ". Resized GPU buffer." << std::endl;
-            }
+            if (settings.count("StateDuration")) STATE_DURATION = std::stof(settings.at("StateDuration"));
+            if (settings.count("TotalPoints")) TOTAL_POINTS = std::stoll(settings.at("TotalPoints"));
         }
         
-        int i = 1;
-        while(true) {
-            std::string section_name = "Transform." + std::to_string(i++);
-            if (!config_data.count(section_name)) break;
-            const auto& section = config_data.at(section_name);
-            Transform t;
-            float a=0,b=0,c=0,d=0,e=0,f=0;
-            if (section.count("a")) a = std::stof(section.at("a"));
-            if (section.count("b")) b = std::stof(section.at("b"));
-            if (section.count("c")) c = std::stof(section.at("c"));
-            if (section.count("d")) d = std::stof(section.at("d"));
-            if (section.count("e")) e = std::stof(section.at("e"));
-            if (section.count("f")) f = std::stof(section.at("f"));
-            t.params1 = glm::vec4(a,b,c,d);
-            t.params2 = glm::vec4(e,f,0,0);
-            if (section.count("color")) {
-                glm::vec3 color_vec;
-                std::stringstream ss(section.at("color"));
-                ss >> color_vec.r; ss.ignore(); ss >> color_vec.g; ss.ignore(); ss >> color_vec.b;
-                // NEW: Use a default alpha that matches the old hardcoded value
-                t.color = glm::vec4(color_vec, 0.15f);
+        for (const auto& pair : config_data) {
+            const std::string& section_name = pair.first;
+            if (section_name.rfind("State.", 0) == 0) { // Section name starts with "State."
+                std::string temp = section_name.substr(6); // Remove "State."
+                size_t dot_pos = temp.find('.');
+                if (dot_pos == std::string::npos) continue;
+
+                int state_num = std::stoi(temp.substr(0, dot_pos));
+                
+                const auto& section = pair.second;
+                Transform t;
+                float a=0,b=0,c=0,d=0,e=0,f=0;
+                if (section.count("a")) a = std::stof(section.at("a"));
+                if (section.count("b")) b = std::stof(section.at("b"));
+                if (section.count("c")) c = std::stof(section.at("c"));
+                if (section.count("d")) d = std::stof(section.at("d"));
+                if (section.count("e")) e = std::stof(section.at("e"));
+                if (section.count("f")) f = std::stof(section.at("f"));
+                t.params1 = glm::vec4(a,b,c,d);
+                t.params2 = glm::vec4(e,f,0,0);
+
+                if (section.count("color")) {
+                    glm::vec3 color_vec;
+                    std::stringstream ss(section.at("color"));
+                    ss >> color_vec.r; ss.ignore(); ss >> color_vec.g; ss.ignore(); ss >> color_vec.b;
+                    t.color = glm::vec4(color_vec, 0.15f);
+                }
+                if (section.count("variation")) {
+                    std::string var_str = section.at("variation");
+                    if (variation_map.count(var_str)) { t.variation.x = variation_map.at(var_str); }
+                }
+                state_map[state_num].push_back(t);
             }
-            if (section.count("variation")) {
-                std::string var_str = section.at("variation");
-                if (variation_map.count(var_str)) { t.variation.x = variation_map.at(var_str); }
-            }
-            out_transforms.push_back(t);
         }
+
+        if (!state_map.empty()) {
+            int max_state = state_map.rbegin()->first;
+            out_states.resize(max_state);
+            for (const auto& pair : state_map) {
+                if(pair.first > 0) out_states[pair.first - 1] = pair.second;
+            }
+        }
+
     } catch (const std::exception& e) {
         std::cerr << "Error parsing config file: " << e.what() << std::endl;
         return false;
     }
     return true;
-}
-
-// MODIFIED: Renamed and now triggers the start of an interpolation
-bool check_and_handle_config_changes() {
-    try {
-        auto current_config_time = std::filesystem::last_write_time(CONFIG_FILENAME);
-        if (current_config_time > last_config_time) {
-            std::cout << "Detected change in " << CONFIG_FILENAME << ". Starting interpolation." << std::endl;
-            
-            // Save the current state as the "previous" state
-            previous_transforms = target_transforms;
-
-            // Load the new config into the "target" state
-            if (load_config(CONFIG_FILENAME, target_transforms)) {
-                 // Reset the interpolation timer
-                 interpolation_alpha = 0.0f;
-                 last_config_time = current_config_time;
-                 return true;
-            }
-        }
-    } catch (const std::filesystem::filesystem_error& e) {}
-    return false;
 }
 
 GLFWwindow* init_window() {
@@ -332,9 +331,9 @@ GLFWwindow* init_window() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     
-    // Load config once to get initial window size
-    std::vector<Transform> initial_transforms;
-    load_config(CONFIG_FILENAME, initial_transforms);
+    // Load config once to get initial window size and point count
+    std::vector<std::vector<Transform>> initial_states;
+    load_config_states(CONFIG_FILENAME, initial_states);
     
     GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "GPU Fractal Flame", NULL, NULL);
     if (!window) { 
@@ -348,13 +347,7 @@ GLFWwindow* init_window() {
         std::cerr << "Failed to initialize GLAD" << std::endl;
         return nullptr;
     }
-
-    try {
-        last_config_time = std::filesystem::last_write_time(CONFIG_FILENAME);
-    } catch(const std::filesystem::filesystem_error& e) {
-        std::cerr << "Warning: Could not get initial timestamp for " << CONFIG_FILENAME << std::endl;
-    }
-
+    
     glEnable(GL_PROGRAM_POINT_SIZE);
     return window;
 }
@@ -379,7 +372,6 @@ void create_screen_quad() {
         -1.0f,  1.0f,  0.0f, 1.0f,
         -1.0f, -1.0f,  0.0f, 0.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
-
         -1.0f,  1.0f,  0.0f, 1.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
          1.0f,  1.0f,  1.0f, 1.0f
