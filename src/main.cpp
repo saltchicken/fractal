@@ -1,30 +1,29 @@
 // main.cpp
-// An improved real-time fractal flame renderer using an FBO for accumulation.
-
+// A real-time fractal flame renderer configured via an INI file.
 #include <iostream>
 #include <vector>
 #include <random>
 #include <cmath>
 #include <string>
+#include <map>
+#include <sstream>
+
+// Custom INI Parser
+#include "ini.h"
 
 // OpenGL / Windowing
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
-
-// UI
-#include "imgui.h"
-#include "imgui_impl_glfw.h"
-#include "imgui_impl_opengl3.h"
 
 // Math
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-// --- Configuration ---
-const unsigned int SCR_WIDTH = 1280;
-const unsigned int SCR_HEIGHT = 720;
-const int POINTS_PER_FRAME = 15000;
+// --- Configuration (loaded from config.ini) ---
+unsigned int SCR_WIDTH = 1280;
+unsigned int SCR_HEIGHT = 720;
+int POINTS_PER_FRAME = 15000;
 
 // --- Data Structures ---
 struct Point {
@@ -36,19 +35,21 @@ enum Variation {
     LINEAR, SINUSOIDAL, SPHERICAL, SWIRL, HORSESHOE
 };
 
-const char* variation_names[] = { "Linear", "Sinusoidal", "Spherical", "Swirl", "Horseshoe" };
+// Map to convert string from INI to enum
+const std::map<std::string, Variation> variation_map = {
+    {"LINEAR", LINEAR},
+    {"SINUSOIDAL", SINUSOIDAL},
+    {"SPHERICAL", SPHERICAL},
+    {"SWIRL", SWIRL},
+    {"HORSESHOE", HORSESHOE}
+};
 
 struct Transform {
     float a = 1.0f, b = 0.0f, c = 0.0f;
     float d = 0.0f, e = 1.0f, f = 0.0f;
     glm::vec3 color = glm::vec3(1.0f, 1.0f, 1.0f);
     Variation variation = LINEAR;
-    int id;
-    Transform() : id(next_id++) {}
-private:
-    static int next_id;
 };
-int Transform::next_id = 0;
 
 // --- Point Shader Code ---
 const char* pointVertexShaderSource = R"(
@@ -62,7 +63,6 @@ const char* pointVertexShaderSource = R"(
         fragColor = aColor;
     }
 )";
-
 const char* pointFragmentShaderSource = R"(
     #version 330 core
     in vec4 fragColor;
@@ -83,7 +83,6 @@ const char* quadVertexShaderSource = R"(
         gl_Position = vec4(aPos.x, aPos.y, 0.0, 1.0);
     }
 )";
-
 const char* quadFragmentShaderSource = R"(
     #version 330 core
     out vec4 FragColor;
@@ -96,13 +95,10 @@ const char* quadFragmentShaderSource = R"(
     }
 )";
 
-
 // --- Global State ---
 std::vector<Transform> transforms;
 std::vector<Point> points;
 glm::vec2 current_point(0.0f, 0.0f);
-bool params_changed = true;
-
 GLuint fbo;
 GLuint fbo_texture;
 GLuint quad_vao, quad_vbo;
@@ -114,11 +110,15 @@ void create_framebuffer();
 void create_screen_quad();
 void apply_variations(glm::vec2& p, Variation var);
 void generate_points();
-void render_ui();
-
+bool load_config(const std::string& filename);
 
 // --- Main Function ---
 int main() {
+    if (!load_config("config.ini")) {
+        std::cerr << "Failed to load config.ini" << std::endl;
+        return -1;
+    }
+
     GLFWwindow* window = init_window();
     if (!window) return -1;
 
@@ -139,62 +139,43 @@ int main() {
     glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Point), (void*)offsetof(Point, color));
     glEnableVertexAttribArray(1);
 
-    transforms.emplace_back();
-    transforms[0].color = glm::vec3(0.0, 0.0, 1.0);
-    transforms[0].variation = SINUSOIDAL;
-    transforms.emplace_back();
-    transforms[1].a = 0.0f; transforms[1].b = 0.5f; transforms[1].c = 0.0f;
-    transforms[1].d = -0.5f; transforms[1].e = 0.0f; transforms[1].f = 0.0f;
-    transforms[1].color = glm::vec3(1.0, 0.0, 0.0);
-    transforms[1].variation = SPHERICAL;
+    // Clear the FBO once at the beginning
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     // --- Main Render Loop ---
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
-
-        if (params_changed) {
-            current_point = glm::vec2(0.0f, 0.0f);
-            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            params_changed = false;
-        }
-
         generate_points();
-        
+
         // 1. Draw points into the FBO
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glUseProgram(pointShaderProgram);
-        
+
         glm::mat4 projection = glm::ortho(-2.0f, 2.0f, -2.0f, 2.0f, -1.0f, 1.0f);
         glUniformMatrix4fv(glGetUniformLocation(pointShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferSubData(GL_ARRAY_BUFFER, 0, points.size() * sizeof(Point), points.data());
-        
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Additive blending
         glBindVertexArray(vao);
         glDrawArrays(GL_POINTS, 0, points.size());
-        
         glDisable(GL_BLEND);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
         // 2. Draw the FBO texture to the screen
-        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
-
         glUseProgram(quadShaderProgram);
         glBindVertexArray(quad_vao);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, fbo_texture);
         glUniform1i(glGetUniformLocation(quadShaderProgram, "screenTexture"), 0);
         glDrawArrays(GL_TRIANGLES, 0, 6);
-        
-        // 3. Render the UI on top
-        render_ui();
 
         glfwSwapBuffers(window);
     }
@@ -209,17 +190,72 @@ int main() {
     glDeleteProgram(pointShaderProgram);
     glDeleteProgram(quadShaderProgram);
 
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
-
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
 }
 
-
 // --- Function Implementations ---
+bool load_config(const std::string& filename) {
+    simpleini::INIReader reader;
+    if (!reader.load(filename)) {
+        return false;
+    }
+    const auto& config_data = reader.get_data();
+
+    try {
+        if (config_data.count("Settings")) {
+            const auto& settings = config_data.at("Settings");
+            if (settings.count("Width")) SCR_WIDTH = std::stoi(settings.at("Width"));
+            if (settings.count("Height")) SCR_HEIGHT = std::stoi(settings.at("Height"));
+            if (settings.count("PointsPerFrame")) POINTS_PER_FRAME = std::stoi(settings.at("PointsPerFrame"));
+        }
+
+        int i = 1;
+        while (true) {
+            std::string section_name = "Transform." + std::to_string(i);
+            if (!config_data.count(section_name)) {
+                break; // No more transforms
+            }
+
+            const auto& section = config_data.at(section_name);
+            Transform t;
+            if (section.count("a")) t.a = std::stof(section.at("a"));
+            if (section.count("b")) t.b = std::stof(section.at("b"));
+            if (section.count("c")) t.c = std::stof(section.at("c"));
+            if (section.count("d")) t.d = std::stof(section.at("d"));
+            if (section.count("e")) t.e = std::stof(section.at("e"));
+            if (section.count("f")) t.f = std::stof(section.at("f"));
+
+            if (section.count("color")) {
+                std::stringstream ss(section.at("color"));
+                std::string item;
+                std::getline(ss, item, ','); ss >> t.color.r;
+                std::getline(ss, item, ','); ss >> t.color.g;
+                std::getline(ss, item, ','); ss >> t.color.b;
+            }
+
+            if (section.count("variation")) {
+                std::string var_str = section.at("variation");
+                if (variation_map.count(var_str)) {
+                    t.variation = variation_map.at(var_str);
+                } else {
+                    std::cerr << "Warning: Unknown variation '" << var_str << "' in " << section_name << std::endl;
+                }
+            }
+            transforms.push_back(t);
+            i++;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error parsing config file: " << e.what() << std::endl;
+        return false;
+    }
+    if (transforms.empty()) {
+        std::cerr << "Warning: No transforms loaded from config file." << std::endl;
+    }
+    return true;
+}
+
 
 void generate_points() {
     static std::random_device rd;
@@ -233,13 +269,16 @@ void generate_points() {
     for (int i = 0; i < POINTS_PER_FRAME; ++i) {
         int transform_idx = dis(gen);
         const auto& t = transforms[transform_idx];
+
         float x_new = t.a * current_point.x + t.b * current_point.y + t.c;
         float y_new = t.d * current_point.x + t.e * current_point.y + t.f;
+
         glm::vec2 p(x_new, y_new);
         apply_variations(p, t.variation);
+
         current_point = p;
-        if (i > 20) {
-            points.push_back({p, glm::vec4(t.color, 0.15f)}); 
+        if (i > 20) { // Skip first few points to let it settle
+            points.push_back({p, glm::vec4(t.color, 0.15f)});
         }
     }
 }
@@ -263,61 +302,14 @@ void apply_variations(glm::vec2& p, Variation var) {
         case HORSESHOE: {
             float r = glm::length(p);
             if (r > 1e-6) {
-                float x_minus_y = p.x - p.y;
-                float x_plus_y = p.x + p.y;
-                p.x = (1.0f / r) * x_minus_y * x_plus_y;
+                float term1 = p.x - p.y;
+                float term2 = p.x + p.y;
+                p.x = (1.0f / r) * term1 * term2;
                 p.y = (1.0f / r) * 2.0f * p.x * p.y;
             }
             break;
         }
     }
-}
-
-void render_ui() {
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-    ImGui::Begin("Flame Controls");
-
-    if (ImGui::Button("Add New Transform")) {
-        transforms.emplace_back();
-        params_changed = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Reset Simulation")) {
-        params_changed = true;
-    }
-    ImGui::Separator();
-    
-    // Using a C-style loop to safely remove elements while iterating
-    for (size_t i = 0; i < transforms.size(); ++i) {
-        Transform& t = transforms[i];
-        ImGui::PushID(t.id);
-
-        std::string header_name = "Transform " + std::to_string(i + 1);
-        if (ImGui::CollapsingHeader(header_name.c_str())) {
-            
-            if (ImGui::Combo("Variation", (int*)&t.variation, variation_names, IM_ARRAYSIZE(variation_names))) {
-                 params_changed = true;
-            }
-            if (ImGui::ColorEdit3("Color", glm::value_ptr(t.color))) {
-                params_changed = true;
-            }
-            if (ImGui::DragFloat("a", &t.a, 0.01f) || ImGui::DragFloat("b", &t.b, 0.01f) || ImGui::DragFloat("c", &t.c, 0.01f) ||
-                ImGui::DragFloat("d", &t.d, 0.01f) || ImGui::DragFloat("e", &t.e, 0.01f) || ImGui::DragFloat("f", &t.f, 0.01f)) {
-                params_changed = true;
-            }
-            if (ImGui::Button("Remove")) {
-                transforms.erase(transforms.begin() + i);
-                params_changed = true;
-                i--; // Decrement loop counter to avoid skipping the next element
-            }
-        }
-        ImGui::PopID();
-    }
-    ImGui::End();
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
 GLFWwindow* init_window() {
@@ -328,19 +320,26 @@ GLFWwindow* init_window() {
     #ifdef __APPLE__
         glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
     #endif
+
     GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Fractal Flame", NULL, NULL);
+    if (!window) {
+        std::cerr << "Failed to create GLFW window" << std::endl;
+        glfwTerminate();
+        return nullptr;
+    }
     glfwMakeContextCurrent(window);
-    gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGui::StyleColorsDark();
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
-    ImGui_ImplOpenGL3_Init("#version 330");
+
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+        std::cerr << "Failed to initialize GLAD" << std::endl;
+        return nullptr;
+    }
+    
     glEnable(GL_PROGRAM_POINT_SIZE);
     return window;
 }
 
 unsigned int create_shader_program(const char* vs_source, const char* fs_source) {
+    // (This function remains unchanged)
     unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vertexShader, 1, &vs_source, NULL);
     glCompileShader(vertexShader);
@@ -357,11 +356,12 @@ unsigned int create_shader_program(const char* vs_source, const char* fs_source)
 }
 
 void create_framebuffer() {
+    // (This function remains unchanged, but now uses global SCR_WIDTH/HEIGHT)
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glGenTextures(1, &fbo_texture);
     glBindTexture(GL_TEXTURE_2D, fbo_texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGB, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fbo_texture, 0);
@@ -371,12 +371,12 @@ void create_framebuffer() {
 }
 
 void create_screen_quad() {
+    // (This function remains unchanged)
     float quadVertices[] = {
         // positions   // texCoords
         -1.0f,  1.0f,  0.0f, 1.0f,
         -1.0f, -1.0f,  0.0f, 0.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
-
         -1.0f,  1.0f,  0.0f, 1.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
          1.0f,  1.0f,  1.0f, 1.0f
