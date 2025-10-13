@@ -6,6 +6,15 @@ project(FractalFlame VERSION 1.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(FetchContent)
+FetchContent_Declare(
+    inih
+    GIT_REPOSITORY https://github.com/benhoyt/inih.git
+    GIT_TAG        r57
+)
+FetchContent_MakeAvailable(inih)
+
+
 # --- Find Dependencies ---
 # Find OpenGL
 find_package(OpenGL REQUIRED)
@@ -40,6 +49,7 @@ target_include_directories(FractalFlame PRIVATE
 target_link_libraries(FractalFlame PRIVATE
     ${OPENGL_LIBRARIES}
     glfw
+    inih
 )
 
 # Print a message upon configuration

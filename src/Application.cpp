@@ -29,7 +29,7 @@ Application::~Application() {
 
 void Application::run() {
     // --- Load Configuration ---
-    if (!m_config.load("config.ini") || m_config.states.empty()) {
+    if (!m_config.load("config.ini") || m_config.getStates().empty()) {
         std::cerr << "Config load failed or no states found. Please check config.ini" << std::endl;
         return;
     }
@@ -39,7 +39,6 @@ void Application::run() {
     // --- Initialization ---
     init_window();
     if (!m_window) return;
-
     m_point_shader_program = create_shader_program_from_files("shaders/vert/point.vert", "shaders/frag/point.frag");
     m_quad_shader_program = create_shader_program_from_files("shaders/vert/quad.vert", "shaders/frag/quad.frag");
     m_compute_shader_program = create_compute_shader_program_from_file("shaders/comp/fractal.comp");
@@ -51,7 +50,7 @@ void Application::run() {
     setup_gpu_compute();
     
     // --- Initialize Animation State ---
-    m_target_transforms = m_config.states[0];
+    m_target_transforms = m_config.getStates()[0];
     m_previous_transforms = m_target_transforms;
     
     glGenVertexArrays(1, &m_point_render_vao);
@@ -84,23 +83,23 @@ void Application::update(float delta_time) {
     }
     
     // Animation interpolation logic
-    if (m_config.states.size() > 1) {
-        m_interpolation_alpha += delta_time / m_config.interpolation_duration;
+    if (m_config.getStates().size() > 1) {
+        m_interpolation_alpha += delta_time / m_config.getInterpolationDuration();
         if (m_interpolation_alpha >= 1.0f) {
-            m_previous_transforms = m_config.states[m_current_state_index];
+            m_previous_transforms = m_config.getStates()[m_current_state_index];
             
-            if (m_config.animation_mode == PING_PONG) {
+            if (m_config.getAnimationMode() == PING_PONG) {
                 int next_state_index = m_current_state_index + m_animation_direction;
-                if (next_state_index >= m_config.states.size() || next_state_index < 0) {
+                if (next_state_index >= (int)m_config.getStates().size() || next_state_index < 0) {
                     m_animation_direction *= -1;
                     next_state_index = m_current_state_index + m_animation_direction;
                 }
                 m_current_state_index = next_state_index;
-            } else if (m_config.animation_mode == LOOP) {
-                m_current_state_index = (m_current_state_index + 1) % m_config.states.size();
+            } else if (m_config.getAnimationMode() == LOOP) {
+                m_current_state_index = (m_current_state_index + 1) % m_config.getStates().size();
             } else { // RANDOM
-                if (m_config.states.size() > 1) {
-                    std::uniform_int_distribution<int> dist(0, m_config.states.size() - 1);
+                if (m_config.getStates().size() > 1) {
+                    std::uniform_int_distribution<int> dist(0, (int)m_config.getStates().size() - 1);
                     int next_state_index = m_current_state_index;
                     while (next_state_index == m_current_state_index) {
                         next_state_index = dist(m_rd_generator);
@@ -109,7 +108,7 @@ void Application::update(float delta_time) {
                 }
             }
             
-            m_target_transforms = m_config.states[m_current_state_index];
+            m_target_transforms = m_config.getStates()[m_current_state_index];
             m_interpolation_alpha = fmod(m_interpolation_alpha, 1.0f);
             std::cout << "Animating to state " << (m_current_state_index + 1) << "..." << std::endl;
         }
@@ -125,12 +124,12 @@ void Application::check_for_config_updates() {
             m_last_config_write_time = current_write_time;
             std::cout << "Config file changed, attempting to reload..." << std::endl;
             Config new_config;
-            if (new_config.load("config.ini") && !new_config.states.empty()) {
+            if (new_config.load("config.ini") && !new_config.getStates().empty()) {
                 m_config = new_config; // Replace the old config with the new one
                 // Gracefully reset the animation
-                m_current_state_index = std::min(m_current_state_index, (int)m_config.states.size() - 1);
+                m_current_state_index = std::min(m_current_state_index, (int)m_config.getStates().size() - 1);
                 m_current_state_index = std::max(0, m_current_state_index);
-                m_target_transforms = m_config.states[m_current_state_index];
+                m_target_transforms = m_config.getStates()[m_current_state_index];
                 m_previous_transforms = m_target_transforms;
                 m_interpolation_alpha = 1.0f;
                 // Re-initialize GPU buffers in case TotalPoints changed
@@ -179,7 +178,7 @@ void Application::render() {
         generate_fractal_gpu(interpolated_transforms);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-    glViewport(0, 0, m_config.width, m_config.height);
+    glViewport(0, 0, m_config.getWidth(), m_config.getHeight());
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(m_point_shader_program);
@@ -190,14 +189,14 @@ void Application::render() {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     
     glBindVertexArray(m_point_render_vao);
-    glDrawArrays(GL_POINTS, 0, m_config.total_points);
+    glDrawArrays(GL_POINTS, 0, (GLsizei)m_config.getTotalPoints());
     
     glDisable(GL_BLEND);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(m_quad_shader_program);
-    glUniform2f(m_res_loc, (float)m_config.width, (float)m_config.height);
+    glUniform2f(m_res_loc, (float)m_config.getWidth(), (float)m_config.getHeight());
     glBindVertexArray(m_quad_vao);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
@@ -214,7 +213,7 @@ void Application::init_window() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
-    m_window = glfwCreateWindow(m_config.width, m_config.height, "GPU Fractal Flame", NULL, NULL);
+    m_window = glfwCreateWindow(m_config.getWidth(), m_config.getHeight(), "GPU Fractal Flame", NULL, NULL);
     if (!m_window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
@@ -235,7 +234,7 @@ void Application::create_framebuffer() {
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     glGenTextures(1, &m_fbo_texture);
     glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, m_config.width, m_config.height, 0, GL_RGBA, GL_FLOAT, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, m_config.getWidth(), m_config.getHeight(), 0, GL_RGBA, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_fbo_texture, 0);
@@ -265,7 +264,7 @@ void Application::setup_gpu_compute() {
     glDeleteBuffers(1, &m_points_ssbo); // Delete old buffer before creating new one
     glGenBuffers(1, &m_points_ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_points_ssbo);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, m_config.total_points * sizeof(Point), nullptr, GL_STATIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, m_config.getTotalPoints() * sizeof(Point), nullptr, GL_STATIC_DRAW);
 }
 
 void Application::query_uniform_locations() {
@@ -286,16 +285,16 @@ void Application::generate_fractal_gpu(const std::vector<Transform>& frame_trans
     
     glUseProgram(m_compute_shader_program);
     
-    glUniform1ui(m_num_transforms_loc, frame_transforms.size());
-    glUniform1ui(m_total_points_loc, m_config.total_points);
+    glUniform1ui(m_num_transforms_loc, (GLuint)frame_transforms.size());
+    glUniform1ui(m_total_points_loc, (GLuint)m_config.getTotalPoints());
     
-    unsigned int current_seed = (m_config.fractal_seed == 0) ? m_rd() : m_config.fractal_seed;
+    unsigned int current_seed = (m_config.getFractalSeed() == 0) ? m_rd() : m_config.getFractalSeed();
     
     glUniform1ui(m_seed_loc, current_seed);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, m_transforms_ssbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_points_ssbo);
     const unsigned int WORKGROUP_SIZE = 256;
-    GLuint num_groups = (m_config.total_points + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+    GLuint num_groups = (GLuint)(m_config.getTotalPoints() + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
     glDispatchCompute(num_groups, 1, 1);
     
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
