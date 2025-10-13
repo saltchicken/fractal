@@ -182,7 +182,20 @@ void Application::render() {
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(m_point_shader_program);
-    glm::mat4 projection = glm::ortho(-2.0f, 2.0f, -2.0f, 2.0f, -1.0f, 1.0f);
+    float zoom = m_config.getCameraZoom();
+    float x_offset = m_config.getCameraX();
+    float y_offset = m_config.getCameraY();
+
+    float aspect_ratio = (float)m_config.getWidth() / (float)m_config.getHeight();
+    // Use a small epsilon to prevent division by zero if zoom is 0
+    float half_height = 2.0f / (zoom < 1e-6f ? 1e-6f : zoom);
+    float half_width = half_height * aspect_ratio;
+
+    glm::mat4 projection = glm::ortho(
+        -half_width - x_offset, half_width - x_offset,
+        -half_height - y_offset, half_height - y_offset,
+        -1.0f, 1.0f
+    );
     glUniformMatrix4fv(m_proj_loc, 1, GL_FALSE, glm::value_ptr(projection));
     
     glEnable(GL_BLEND);
