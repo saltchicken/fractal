@@ -42,6 +42,9 @@ struct Transform {
     glm::uvec4 variation{}; // .x = variation_enum
 };
 
+enum AnimationMode { PING_PONG, LOOP };
+AnimationMode animation_mode = PING_PONG; // Default to ping-pong
+
 // --- Global State ---
 // State management for interpolation and animation
 std::vector<Transform> previous_transforms;
@@ -122,13 +125,17 @@ int main() {
                 // Set the current state as the starting point for interpolation
                 previous_transforms = config_states[current_state_index];
 
-                // Ping-Pong Logic
+                if (animation_mode == PING_PONG) {
                 int next_state_index = current_state_index + animation_direction;
+                // Reverse direction if we've reached an end
                 if (next_state_index >= config_states.size() || next_state_index < 0) {
-                    animation_direction *= -1; // Reverse direction
+                    animation_direction *= -1; 
                     next_state_index = current_state_index + animation_direction;
                 }
                 current_state_index = next_state_index;
+            } else { // LOOP mode
+                current_state_index = (current_state_index + 1) % config_states.size();
+            }
                 
                 // Set the new target state and start the interpolation
                 target_transforms = config_states[current_state_index];
@@ -255,7 +262,6 @@ void setup_gpu_compute() {
     glBufferData(GL_SHADER_STORAGE_BUFFER, TOTAL_POINTS * sizeof(Point), nullptr, GL_STATIC_DRAW);
 }
 
-// CRASH FIX: This function no longer makes any OpenGL calls.
 bool load_config_states(const std::string& filename, std::vector<std::vector<Transform>>& out_states) {
     out_states.clear();
     simpleini::INIReader reader;
@@ -275,6 +281,17 @@ bool load_config_states(const std::string& filename, std::vector<std::vector<Tra
             if (settings.count("InterpolationDuration")) INTERPOLATION_DURATION = std::stof(settings.at("InterpolationDuration"));
             if (settings.count("StateDuration")) STATE_DURATION = std::stof(settings.at("StateDuration"));
             if (settings.count("TotalPoints")) TOTAL_POINTS = std::stoll(settings.at("TotalPoints"));
+
+            if (settings.count("AnimationMode")) {
+                std::string mode_str = settings.at("AnimationMode");
+                // Convert to lower case for case-insensitive comparison
+                std::transform(mode_str.begin(), mode_str.end(), mode_str.begin(), ::tolower);
+                if (mode_str == "loop") {
+                    animation_mode = LOOP;
+                } else {
+                    animation_mode = PING_PONG;
+                }
+            }
         }
         
         for (const auto& pair : config_data) {
