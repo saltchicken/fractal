@@ -8,41 +8,35 @@
 #include <sstream>
 #include <filesystem>
 #include <chrono>
-
 #include "ini.h"
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <glm.hpp>
 #include <gtc/matrix_transform.hpp>
 #include <gtc/type_ptr.hpp>
-
 // --- Configuration ---
 const std::string CONFIG_FILENAME = "config.ini";
 unsigned int SCR_WIDTH = 1280;
 unsigned int SCR_HEIGHT = 720;
-long long TOTAL_POINTS = 5000000;
+long long TOTAL_POINTS = 500000;
 const unsigned int WORKGROUP_SIZE = 256;
-
 // --- Data Structures (std430 aligned) ---
 // Using vec4 for all members simplifies memory alignment between C++ and GLSL
 struct Point {
     glm::vec4 position; // .xy = position, .zw unused
     glm::vec4 color;
 };
-
 enum Variation { LINEAR, SINUSOIDAL, SPHERICAL, SWIRL, HORSESHOE };
 const std::map<std::string, Variation> variation_map = {
     {"LINEAR", LINEAR}, {"SINUSOIDAL", SINUSOIDAL}, {"SPHERICAL", SPHERICAL},
     {"SWIRL", SWIRL}, {"HORSESHOE", HORSESHOE}
 };
-
 struct Transform {
     glm::vec4 params1; // x=a, y=b, z=c, w=d
     glm::vec4 params2; // x=e, y=f
     glm::vec4 color;
     glm::uvec4 variation; // .x = variation_enum
 };
-
 // --- Shader Code ---
 const char* computeShaderSource = R"(#version 430 core
 layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
@@ -87,14 +81,11 @@ void main() {
         current_point = vec2(t.params1.x*current_point.x + t.params1.y*current_point.y + t.params1.z, t.params1.w*current_point.x + t.params2.x*current_point.y + t.params2.y);
         current_point = apply_variations(current_point, t.variation.x);
     }
-
     // THE FIX: The final color is the color of the LAST transform used, not an average.
     vec3 final_color = transforms[last_t_idx].color.rgb;
-
     points[index].position = vec4(current_point, 0.0, 1.0);
     points[index].color = vec4(final_color, 0.15);
 })";
-
 const char* pointVertexShaderSource = R"(#version 430 core
 struct Point { vec4 position; vec4 color; };
 layout(std430, binding = 1) readonly buffer PointBlock { Point points[]; };
@@ -105,19 +96,15 @@ void main() {
     gl_Position = projection * vec4(p.position.xy, 0.0, 1.0);
     fragColor = p.color;
 })";
-
 const char* pointFragmentShaderSource = R"(#version 330 core
 in vec4 fragColor; out vec4 FragColor; void main() { FragColor = fragColor; })";
-
 const char* quadVertexShaderSource = R"(#version 330 core
 layout (location = 0) in vec2 aPos; layout (location = 1) in vec2 aTexCoords;
 out vec2 TexCoords; void main() { TexCoords = aTexCoords; gl_Position = vec4(aPos, 0.0, 1.0); })";
-
 const char* quadFragmentShaderSource = R"(#version 330 core
 out vec4 FragColor; in vec2 TexCoords; uniform sampler2D screenTexture;
 void main() { vec3 color = texture(screenTexture, TexCoords).rgb;
 color = pow(color, vec3(0.8)); FragColor = vec4(color, 1.0); })";
-
 // --- Global State ---
 std::vector<Transform> transforms;
 GLuint fbo, fbo_texture, quad_vao, quad_vbo;
@@ -126,7 +113,7 @@ GLuint transforms_ssbo, points_ssbo;
 bool should_regenerate = true;
 std::filesystem::file_time_type last_config_time;
 std::random_device rd;
-
+GLuint timer_query; // ** ADDED: For GPU timing **
 // --- Function Prototypes ---
 void check_config_changes();
 void generate_fractal_gpu();
@@ -137,7 +124,6 @@ void create_framebuffer();
 void create_screen_quad();
 void setup_gpu_compute();
 bool load_config(const std::string& filename);
-
 int main() {
     GLFWwindow* window = init_window();
     if (!window) return -1;
@@ -145,15 +131,16 @@ int main() {
     pointShaderProgram = create_shader_program(pointVertexShaderSource, pointFragmentShaderSource);
     unsigned int quadShaderProgram = create_shader_program(quadVertexShaderSource, quadFragmentShaderSource);
     computeShaderProgram = create_compute_shader_program(computeShaderSource);
-
     create_framebuffer();
     create_screen_quad();
     setup_gpu_compute();
     
+    // ** ADDED: Create the timer query object **
+    glGenQueries(1, &timer_query);
+
     // A VAO is still needed for rendering, but it doesn't need any vertex buffers
     GLuint vao;
     glGenVertexArrays(1, &vao);
-
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         check_config_changes();
@@ -163,7 +150,6 @@ int main() {
             generate_fractal_gpu();
             should_regenerate = false;
         }
-
         // --- Render Pass: Draw the generated points to the FBO ---
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -177,7 +163,6 @@ int main() {
         glDrawArrays(GL_POINTS, 0, TOTAL_POINTS); // Draw directly from SSBO
         glDisable(GL_BLEND);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
         // --- Post-Processing Pass: Draw FBO texture to the screen quad ---
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -186,10 +171,8 @@ int main() {
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, fbo_texture);
         glDrawArrays(GL_TRIANGLES, 0, 6);
-
         glfwSwapBuffers(window);
     }
-
     // --- Cleanup ---
     glDeleteVertexArrays(1, &vao);
     glDeleteVertexArrays(1, &quad_vao);
@@ -201,54 +184,76 @@ int main() {
     glDeleteProgram(pointShaderProgram);
     glDeleteProgram(quadShaderProgram);
     glDeleteProgram(computeShaderProgram);
+    glDeleteQueries(1, &timer_query); // ** ADDED: Cleanup the query object **
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
 }
-
 void generate_fractal_gpu() {
     if (transforms.empty()) return;
 
-    auto start_time = std::chrono::high_resolution_clock::now();
     std::cout << "Dispatching GPU to generate " << TOTAL_POINTS << " points..." << std::flush;
+
+    // --- Combined Timing ---
+    
+    // 1. Start the CPU timer
+    auto start_time_cpu = std::chrono::high_resolution_clock::now();
+
+    // 2. Start the GPU timer query
+    glBeginQuery(GL_TIME_ELAPSED, timer_query);
 
     // Update the transforms buffer on the GPU
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, transforms_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, transforms.size() * sizeof(Transform), transforms.data(), GL_DYNAMIC_DRAW);
-
+    
     // Run the compute shader
     glUseProgram(computeShaderProgram);
     glUniform1ui(glGetUniformLocation(computeShaderProgram, "num_transforms"), transforms.size());
     glUniform1ui(glGetUniformLocation(computeShaderProgram, "total_points"), TOTAL_POINTS);
-    glUniform1ui(glGetUniformLocation(computeShaderProgram, "seed"), rd()); // New random seed each time
-
+    glUniform1ui(glGetUniformLocation(computeShaderProgram, "seed"), rd()); 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, transforms_ssbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, points_ssbo);
-
-    // Calculate number of workgroups and dispatch
+    
+    // Dispatch the work
     GLuint num_groups = (TOTAL_POINTS + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
     glDispatchCompute(num_groups, 1, 1);
-
-    // Wait for the compute shader to finish writing to memory
+    
+    // This barrier ensures the commands are processed before the timer ends
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double, std::milli> fp_ms = end_time - start_time;
-    std::cout << " Done in " << fp_ms.count() << " ms." << std::endl;
-}
+    // 3. End the GPU timer query
+    glEndQuery(GL_TIME_ELAPSED);
 
+    // 4. Wait for the GPU result and retrieve it
+    // This loop blocks the CPU, so it's correctly included in the CPU timer's duration.
+    GLint done = 0;
+    while (!done) {
+        glGetQueryObjectiv(timer_query, GL_QUERY_RESULT_AVAILABLE, &done);
+    }
+    GLuint64 elapsed_gpu_ns;
+    glGetQueryObjectui64v(timer_query, GL_QUERY_RESULT, &elapsed_gpu_ns);
+    
+    // 5. Stop the CPU timer
+    auto end_time_cpu = std::chrono::high_resolution_clock::now();
+
+    // --- Report Results ---
+    double elapsed_gpu_ms = elapsed_gpu_ns / 1000000.0;
+    std::chrono::duration<double, std::milli> elapsed_cpu_ms = end_time_cpu - start_time_cpu;
+
+    std::cout << " Done." << std::endl;
+    std::cout << "  - GPU Execution Time:  " << elapsed_gpu_ms << " ms" << std::endl;
+    std::cout << "  - CPU Wait Time (Total): " << elapsed_cpu_ms.count() << " ms" << std::endl;
+}
 void setup_gpu_compute() {
     // Create Shader Storage Buffer Objects (SSBOs)
     glGenBuffers(1, &transforms_ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, transforms_ssbo);
     // Allocate a reasonable max size for transforms
     glBufferData(GL_SHADER_STORAGE_BUFFER, 100 * sizeof(Transform), nullptr, GL_DYNAMIC_DRAW);
-
     glGenBuffers(1, &points_ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, points_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, TOTAL_POINTS * sizeof(Point), nullptr, GL_STATIC_DRAW);
 }
-
 bool load_config(const std::string& filename) {
     transforms.clear();
     simpleini::INIReader reader;
@@ -257,7 +262,6 @@ bool load_config(const std::string& filename) {
         return false; 
     }
     const auto& config_data = reader.get_data();
-
     try {
         if (config_data.count("Settings")) {
             const auto& settings = config_data.at("Settings");
@@ -289,7 +293,6 @@ bool load_config(const std::string& filename) {
             if (section.count("f")) f = std::stof(section.at("f"));
             t.params1 = glm::vec4(a,b,c,d);
             t.params2 = glm::vec4(e,f,0,0);
-
             if (section.count("color")) {
                 glm::vec3 color_vec;
                 std::stringstream ss(section.at("color"));
@@ -306,7 +309,6 @@ bool load_config(const std::string& filename) {
         std::cerr << "Error parsing config file: " << e.what() << std::endl;
         return false;
     }
-
     try {
         last_config_time = std::filesystem::last_write_time(filename);
     } catch(const std::filesystem::filesystem_error& e) {
@@ -314,7 +316,6 @@ bool load_config(const std::string& filename) {
     }
     return true;
 }
-
 void check_config_changes() {
     try {
         auto current_config_time = std::filesystem::last_write_time(CONFIG_FILENAME);
@@ -325,7 +326,6 @@ void check_config_changes() {
         }
     } catch (const std::filesystem::filesystem_error& e) {}
 }
-
 GLFWwindow* init_window() {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
@@ -352,7 +352,6 @@ GLFWwindow* init_window() {
     glEnable(GL_PROGRAM_POINT_SIZE);
     return window;
 }
-
 unsigned int create_shader_program(const char* vs_source, const char* fs_source) {
     unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vertexShader, 1, &vs_source, NULL); glCompileShader(vertexShader);
@@ -367,7 +366,6 @@ unsigned int create_shader_program(const char* vs_source, const char* fs_source)
     glDeleteShader(vertexShader); glDeleteShader(fragmentShader);
     return shaderProgram;
 }
-
 unsigned int create_compute_shader_program(const char* cs_source) {
     unsigned int computeShader = glCreateShader(GL_COMPUTE_SHADER);
     glShaderSource(computeShader, 1, &cs_source, NULL);
@@ -380,7 +378,6 @@ unsigned int create_compute_shader_program(const char* cs_source) {
         glGetShaderInfoLog(computeShader, 512, NULL, infoLog);
         std::cerr << "ERROR::SHADER::COMPUTE::COMPILATION_FAILED\n" << infoLog << std::endl;
     };
-
     unsigned int shaderProgram = glCreateProgram();
     glAttachShader(shaderProgram, computeShader);
     glLinkProgram(shaderProgram);
@@ -393,7 +390,6 @@ unsigned int create_compute_shader_program(const char* cs_source) {
     glDeleteShader(computeShader);
     return shaderProgram;
 }
-
 void create_framebuffer() {
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -407,7 +403,6 @@ void create_framebuffer() {
         std::cerr << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!" << std::endl;
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
-
 void create_screen_quad() {
     float quadVertices[] = { -1.0f, 1.0f, 0.0f, 1.0f, -1.0f, -1.0f, 0.0f, 0.0f, 1.0f, -1.0f, 1.0f, 0.0f,
         -1.0f, 1.0f, 0.0f, 1.0f, 1.0f, -1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f };
