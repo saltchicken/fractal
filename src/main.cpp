@@ -233,8 +233,8 @@ void generate_fractal_gpu() {
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     
     auto end_time = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-    std::cout << " Done in " << duration.count() << " ms." << std::endl;
+    std::chrono::duration<double, std::milli> fp_ms = end_time - start_time;
+    std::cout << " Done in " << fp_ms.count() << " ms." << std::endl;
 }
 
 void setup_gpu_compute() {
