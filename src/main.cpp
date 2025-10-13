@@ -42,7 +42,7 @@ struct Transform {
     glm::uvec4 variation{}; // .x = variation_enum
 };
 
-enum AnimationMode { PING_PONG, LOOP };
+enum AnimationMode { PING_PONG, LOOP, RANDOM };
 AnimationMode animation_mode = PING_PONG; // Default to ping-pong
 
 // --- Global State ---
@@ -59,6 +59,9 @@ float INTERPOLATION_DURATION = 2.0f; // seconds
 float STATE_DURATION = 10.0f; // seconds
 
 std::random_device rd;
+// Add a generator instance for use in C++
+std::mt19937 rd_generator(rd()); 
+
 GLuint fbo, fbo_texture, quad_vao, quad_vbo;
 GLuint computeShaderProgram, pointShaderProgram;
 GLuint transforms_ssbo, points_ssbo;
@@ -126,16 +129,25 @@ int main() {
                 previous_transforms = config_states[current_state_index];
 
                 if (animation_mode == PING_PONG) {
-                int next_state_index = current_state_index + animation_direction;
-                // Reverse direction if we've reached an end
-                if (next_state_index >= config_states.size() || next_state_index < 0) {
-                    animation_direction *= -1; 
-                    next_state_index = current_state_index + animation_direction;
+                    int next_state_index = current_state_index + animation_direction;
+                    if (next_state_index >= config_states.size() || next_state_index < 0) {
+                        animation_direction *= -1; 
+                        next_state_index = current_state_index + animation_direction;
+                    }
+                    current_state_index = next_state_index;
+                } else if (animation_mode == LOOP) { // Change else to else if
+                    current_state_index = (current_state_index + 1) % config_states.size();
+                } else { // RANDOM mode
+                    if (config_states.size() > 1) {
+                        std::uniform_int_distribution<int> dist(0, config_states.size() - 1);
+                        int next_state_index = current_state_index;
+                        // Ensure we don't pick the same state twice in a row
+                        while (next_state_index == current_state_index) {
+                            next_state_index = dist(rd_generator);
+                        }
+                        current_state_index = next_state_index;
+                    }
                 }
-                current_state_index = next_state_index;
-            } else { // LOOP mode
-                current_state_index = (current_state_index + 1) % config_states.size();
-            }
                 
                 // Set the new target state and start the interpolation
                 target_transforms = config_states[current_state_index];
@@ -288,6 +300,8 @@ bool load_config_states(const std::string& filename, std::vector<std::vector<Tra
                 std::transform(mode_str.begin(), mode_str.end(), mode_str.begin(), ::tolower);
                 if (mode_str == "loop") {
                     animation_mode = LOOP;
+                } else if (mode_str == "random") {
+                    animation_mode = RANDOM;
                 } else {
                     animation_mode = PING_PONG;
                 }
