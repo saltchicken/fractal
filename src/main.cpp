@@ -58,6 +58,8 @@ float state_timer = 0.0f;
 float INTERPOLATION_DURATION = 2.0f; // seconds
 float STATE_DURATION = 10.0f; // seconds
 
+// NEW: Seed for the fractal. 0 = random, any other value is fixed.
+unsigned int fractal_seed = 0;
 std::random_device rd;
 // Add a generator instance for use in C++
 std::mt19937 rd_generator(rd()); 
@@ -252,7 +254,9 @@ void generate_fractal_gpu(const std::vector<Transform>& frame_transforms) {
     glUseProgram(computeShaderProgram);
     glUniform1ui(glGetUniformLocation(computeShaderProgram, "num_transforms"), frame_transforms.size());
     glUniform1ui(glGetUniformLocation(computeShaderProgram, "total_points"), TOTAL_POINTS);
-    glUniform1ui(glGetUniformLocation(computeShaderProgram, "seed"), rd()); 
+
+    unsigned int current_seed = (fractal_seed == 0) ? rd() : fractal_seed;
+    glUniform1ui(glGetUniformLocation(computeShaderProgram, "seed"), current_seed);
     
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, transforms_ssbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, points_ssbo);
@@ -293,6 +297,10 @@ bool load_config_states(const std::string& filename, std::vector<std::vector<Tra
             if (settings.count("InterpolationDuration")) INTERPOLATION_DURATION = std::stof(settings.at("InterpolationDuration"));
             if (settings.count("StateDuration")) STATE_DURATION = std::stof(settings.at("StateDuration"));
             if (settings.count("TotalPoints")) TOTAL_POINTS = std::stoll(settings.at("TotalPoints"));
+            if (settings.count("Seed")) {
+                // Use stoul for string to unsigned long, which fits unsigned int
+                fractal_seed = std::stoul(settings.at("Seed"));
+            }
 
             if (settings.count("AnimationMode")) {
                 std::string mode_str = settings.at("AnimationMode");
