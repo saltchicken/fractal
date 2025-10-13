@@ -1,9 +1,7 @@
 # CMake minimum version required
 cmake_minimum_required(VERSION 3.12)
-
 # Define the project
 project(FractalFlame VERSION 1.0)
-
 # Set the C++ standard to C++17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,13 +10,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Find OpenGL
 find_package(OpenGL REQUIRED)
 # Find GLFW3. You may need to install this via your system's package manager
-# (e.g., `sudo apt-get install libglfw3-dev` or `brew install glfw`)
 find_package(glfw3 REQUIRED)
 
 # --- Define Source Files ---
 # List all source files for our executable
 set(SOURCE_FILES
     src/main.cpp
+    src/Application.cpp # Add the new source file
     src/Shader.cpp
     libs/glad/src/glad.c
 )
