@@ -81,9 +81,9 @@ int main() {
     GLFWwindow* window = init_window();
     if (!window) return -1;
     
-    pointShaderProgram = create_shader_program_from_files("shaders/point.vert", "shaders/point.frag");
-    unsigned int quadShaderProgram = create_shader_program_from_files("shaders/quad.vert", "shaders/quad.frag");
-    computeShaderProgram = create_compute_shader_program_from_file("shaders/fractal.comp");
+    pointShaderProgram = create_shader_program_from_files("shaders/vert/point.vert", "shaders/frag/point.frag");
+    unsigned int quadShaderProgram = create_shader_program_from_files("shaders/vert/quad.vert", "shaders/frag/quad.frag");
+    computeShaderProgram = create_compute_shader_program_from_file("shaders/comp/fractal.comp");
 
     create_framebuffer();
     create_screen_quad();
