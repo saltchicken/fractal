@@ -59,6 +59,8 @@ private:
 
     // OpenGL handles
     GLuint m_fbo = 0, m_fbo_texture = 0, m_quad_vao = 0, m_quad_vbo = 0;
+    GLuint m_accumulation_fbo = 0, m_accumulation_texture = 0;
+    
     GLuint m_compute_shader_program = 0, m_point_shader_program = 0, m_quad_shader_program = 0;
     GLuint m_fade_shader_program = 0; // Add this line
     GLuint m_transforms_ssbo = 0, m_points_ssbo = 0;
@@ -70,6 +72,10 @@ private:
     GLint m_brightness_loc;
     GLint m_contrast_loc;
     GLint m_gamma_loc;
+
+    GLint m_accumulation_sampler_loc;
+    GLint m_blend_factor_loc;
+
     GLint m_persistence_loc; // Add this line
     GLint m_num_transforms_loc;
     GLint m_total_points_loc;

@@ -37,6 +37,7 @@ public:
     float getGamma() const { return post_gamma; }
 
     float getPersistence() const { return post_persistence; }
+    float getDenoiseFactor() const { return post_denoise_factor; } // Add this line
 
     long long getTotalPoints() const { return total_points; }
     float getInterpolationDuration() const { return interpolation_duration; }
@@ -58,6 +59,8 @@ private:
     float post_gamma = 1.2f;
 
     float post_persistence = 0.95f; // Add this line
+
+    float post_denoise_factor = 0.05f; // Add this line
 
     long long total_points = 500000;
     float interpolation_duration = 2.0f;

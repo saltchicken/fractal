@@ -44,6 +44,10 @@ Application::~Application() {
     glDeleteBuffers(1, &m_points_ssbo);
     glDeleteFramebuffers(1, &m_fbo);
     glDeleteTextures(1, &m_fbo_texture);
+
+    glDeleteFramebuffers(1, &m_accumulation_fbo);
+    glDeleteTextures(1, &m_accumulation_texture);
+    
     glDeleteProgram(m_point_shader_program);
     glDeleteProgram(m_quad_shader_program);
     glDeleteProgram(m_fade_shader_program); // Cleanup for the new shader
@@ -182,6 +186,9 @@ void Application::check_for_config_updates() {
 }
 
 void Application::render() {
+    // --- PART 0: Calculate Interpolated Transforms ---
+    // This part calculates the current state of the fractal transforms based on animation progress.
+    // It remains unchanged from before.
     std::vector<Transform> interpolated_transforms;
     size_t num_target = m_target_transforms.size();
     size_t num_previous = m_previous_transforms.size();
@@ -214,28 +221,26 @@ void Application::render() {
         interpolated_transforms.push_back(interpolated);
     }
 
+    // Generate the point cloud for the current frame using the compute shader
     if (!interpolated_transforms.empty()) {
         generate_fractal_gpu(interpolated_transforms);
     }
 
-    // --- Render to Framebuffer ---
+    // --- PART 1: Render Raw Points with Motion Blur ---
+    // We bind our primary framebuffer (m_fbo) to draw the new points into it.
+    // This pass creates the motion blur trails.
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+    glEnable(GL_BLEND);
 
-    // --- 1. Fade Pass ---
-    // Draw a semi-transparent quad over the entire FBO to fade the previous frame.
+    // A. Fade Pass: Draw a semi-transparent black quad over the last frame's content in this FBO.
     glUseProgram(m_fade_shader_program);
     glUniform1f(m_persistence_loc, m_config.getPersistence());
-    glEnable(GL_BLEND);
-    // This blend function multiplies the destination (the old frame) by the
-    // inverse of the source alpha.
-    glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA); // Correct blend function for persistence
     glBindVertexArray(m_quad_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // --- 2. Point Pass ---
-    // Now, additively blend the new points on top of the faded image.
+    // B. Point Pass: Additively draw the new points on top of the faded image.
     glUseProgram(m_point_shader_program);
-    
     float zoom = m_config.getCameraZoom();
     float x_offset = m_config.getCameraX();
     float y_offset = m_config.getCameraY();
@@ -248,30 +253,60 @@ void Application::render() {
         -1.0f, 1.0f
     );
     glUniformMatrix4fv(m_proj_loc, 1, GL_FALSE, glm::value_ptr(projection));
-    
-    // Switch to additive blending for the points
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-    
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Switch to additive blending
     glBindVertexArray(m_point_render_vao);
     glDrawArrays(GL_POINTS, 0, (GLsizei)m_config.getTotalPoints());
-    
-    // --- Render to Screen ---
-    glDisable(GL_BLEND); // Disable blend for the final screen quad
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    // --- PART 2: Accumulation Pass for Denoising ---
+    // We bind the accumulation framebuffer to blend the newly rendered points (with motion blur)
+    // into our historical average, which smooths out the grain.
+    glBindFramebuffer(GL_FRAMEBUFFER, m_accumulation_fbo);
+    glUseProgram(m_quad_shader_program);
+    glDisable(GL_BLEND); // Blending is done inside the shader with mix()
+
+    // Set the blend factor to tell the shader we are in accumulation mode
+    glUniform1f(m_blend_factor_loc, m_config.getDenoiseFactor());
+
+    // Bind the texture from the primary FBO (current frame) to texture unit 0
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
+    glUniform1i(glGetUniformLocation(m_quad_shader_program, "screenTexture"), 0);
+
+    // Bind the accumulation texture (historical frames) to texture unit 1
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, m_accumulation_texture);
+    glUniform1i(m_accumulation_sampler_loc, 1);
+
+    // Draw the quad. The shader will read from both textures and write the blended result
+    // back into the accumulation texture attached to this FBO.
+    glBindVertexArray(m_quad_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    // --- PART 3: Final Display Pass ---
+    // Unbind any framebuffer, which means we are now drawing to the screen.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClear(GL_COLOR_BUFFER_BIT);
 
+    // Use the same quad shader, but switch it to display mode
     glUseProgram(m_quad_shader_program);
+    glUniform1f(m_blend_factor_loc, 0.0f); // A blend factor of 0 triggers the final post-fx path
+
+    // Set all post-processing uniforms
     glUniform2f(m_res_loc, (float)m_width, (float)m_height);
     glUniform1f(m_brightness_loc, m_config.getBrightness());
     glUniform1f(m_contrast_loc, m_config.getContrast());
     glUniform1f(m_gamma_loc, m_config.getGamma());
-    glBindVertexArray(m_quad_vao);
+
+    // Bind the final, denoised image from the accumulation texture to be processed and displayed
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
+    glBindTexture(GL_TEXTURE_2D, m_accumulation_texture);
+    glUniform1i(glGetUniformLocation(m_quad_shader_program, "screenTexture"), 0);
+
+    // Draw the final image to the screen
+    glBindVertexArray(m_quad_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
+    // Swap the front and back buffers to display the rendered frame
     glfwSwapBuffers(m_window);
 }
 
@@ -311,20 +346,34 @@ void Application::init_window() {
 }
 
 void Application::recreate_framebuffer() {
+    // This function now creates/recreates BOTH framebuffers
     if (m_fbo) glDeleteFramebuffers(1, &m_fbo);
     if (m_fbo_texture) glDeleteTextures(1, &m_fbo_texture);
+    if (m_accumulation_fbo) glDeleteFramebuffers(1, &m_accumulation_fbo);
+    if (m_accumulation_texture) glDeleteTextures(1, &m_accumulation_texture);
 
+    // --- Main FBO (for raw points) ---
     glGenFramebuffers(1, &m_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-
     glGenTextures(1, &m_fbo_texture);
     glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, m_width, m_height, 0, GL_RGBA, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_fbo_texture, 0);
+
+    // --- Accumulation FBO (for denoised image) ---
+    glGenFramebuffers(1, &m_accumulation_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_accumulation_fbo);
+    glGenTextures(1, &m_accumulation_texture);
+    glBindTexture(GL_TEXTURE_2D, m_accumulation_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, m_width, m_height, 0, GL_RGBA, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_accumulation_texture, 0);
+    // Clear the accumulation buffer initially
+    glClear(GL_COLOR_BUFFER_BIT);
+
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cerr << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!" << std::endl;
@@ -370,6 +419,10 @@ void Application::query_uniform_locations() {
     m_brightness_loc = glGetUniformLocation(m_quad_shader_program, "u_brightness");
     m_contrast_loc = glGetUniformLocation(m_quad_shader_program, "u_contrast");
     m_gamma_loc = glGetUniformLocation(m_quad_shader_program, "u_gamma");
+
+    m_accumulation_sampler_loc = glGetUniformLocation(m_quad_shader_program, "accumulationTexture");
+    m_blend_factor_loc = glGetUniformLocation(m_quad_shader_program, "u_blend_factor");
+
     m_persistence_loc = glGetUniformLocation(m_fade_shader_program, "u_persistence");
 
     // Compute program uniforms
