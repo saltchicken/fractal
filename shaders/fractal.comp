@@ -73,8 +73,7 @@ void main() {
         current_point = apply_variations(current_point, t.variation.x);
     }
 
-    vec3 final_color = transforms[last_t_idx].color.rgb;
 
     points[index].position = vec4(current_point, 0.0, 1.0);
-    points[index].color = vec4(final_color, 0.15);
+    points[index].color = transforms[last_t_idx].color; // NEW
 }
