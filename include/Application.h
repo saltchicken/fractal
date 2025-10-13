@@ -5,7 +5,8 @@
 #include <string>
 #include <vector>
 #include <random>
-#include <filesystem> // Required for checking file timestamps
+#include <filesystem> 
+#include <glad/glad.h> // Include glad to get GLint type
 
 // Using forward declaration for GLFWwindow
 struct GLFWwindow;
@@ -19,25 +20,25 @@ class Application {
 public:
     Application();
     ~Application();
-
     void run();
 
 private:
     // Constants
-    static constexpr float HOT_RELOAD_INTERVAL = 1.0f; // Check for changes every 1.0 second
+    static constexpr float HOT_RELOAD_INTERVAL = 1.0f;
 
     // Initialization steps
     void init_window();
     void create_framebuffer();
     void create_screen_quad();
     void setup_gpu_compute();
-    
+    void query_uniform_locations(); // <<< ADDED: New private method
+
     // Main loop functions
     void process_input();
     void update(float delta_time);
     void render();
     
-    // New hot-reloading method
+    // Hot-reloading method
     void check_for_config_updates();
 
     // GPU fractal generation
@@ -56,6 +57,13 @@ private:
     GLuint m_compute_shader_program, m_point_shader_program, m_quad_shader_program;
     GLuint m_transforms_ssbo, m_points_ssbo;
     GLuint m_point_render_vao;
+
+    // <<< ADDED: Cached Uniform Locations
+    GLint m_proj_loc;
+    GLint m_res_loc;
+    GLint m_num_transforms_loc;
+    GLint m_total_points_loc;
+    GLint m_seed_loc;
 
     // State management
     std::vector<Transform> m_previous_transforms;

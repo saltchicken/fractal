@@ -3,7 +3,6 @@
 #include <map>
 #include <algorithm>
 #include <cmath>
-#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <gtc/matrix_transform.hpp>
 #include <gtc/type_ptr.hpp>
@@ -34,16 +33,18 @@ void Application::run() {
         std::cerr << "Config load failed or no states found. Please check config.ini" << std::endl;
         return;
     }
-    // Store the initial file timestamp for hot-reloading
     m_last_config_write_time = std::filesystem::last_write_time("config.ini");
     m_hot_reload_check_timer = HOT_RELOAD_INTERVAL;
     
     // --- Initialization ---
     init_window();
     if (!m_window) return;
+
     m_point_shader_program = create_shader_program_from_files("shaders/vert/point.vert", "shaders/frag/point.frag");
     m_quad_shader_program = create_shader_program_from_files("shaders/vert/quad.vert", "shaders/frag/quad.frag");
     m_compute_shader_program = create_compute_shader_program_from_file("shaders/comp/fractal.comp");
+    
+    query_uniform_locations(); // Query locations after creating shaders
     
     create_framebuffer();
     create_screen_quad();
@@ -123,22 +124,17 @@ void Application::check_for_config_updates() {
         if (current_write_time > m_last_config_write_time) {
             m_last_config_write_time = current_write_time;
             std::cout << "Config file changed, attempting to reload..." << std::endl;
-
             Config new_config;
             if (new_config.load("config.ini") && !new_config.states.empty()) {
                 m_config = new_config; // Replace the old config with the new one
-
                 // Gracefully reset the animation
                 m_current_state_index = std::min(m_current_state_index, (int)m_config.states.size() - 1);
                 m_current_state_index = std::max(0, m_current_state_index);
-
                 m_target_transforms = m_config.states[m_current_state_index];
                 m_previous_transforms = m_target_transforms;
                 m_interpolation_alpha = 1.0f;
-
                 // Re-initialize GPU buffers in case TotalPoints changed
                 setup_gpu_compute(); 
-
                 std::cout << "Successfully reloaded config.ini!" << std::endl;
             } else {
                 std::cerr << "Failed to reload config.ini, keeping old settings." << std::endl;
@@ -188,7 +184,7 @@ void Application::render() {
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(m_point_shader_program);
     glm::mat4 projection = glm::ortho(-2.0f, 2.0f, -2.0f, 2.0f, -1.0f, 1.0f);
-    glUniformMatrix4fv(glGetUniformLocation(m_point_shader_program, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+    glUniformMatrix4fv(m_proj_loc, 1, GL_FALSE, glm::value_ptr(projection));
     
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
@@ -201,7 +197,7 @@ void Application::render() {
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(m_quad_shader_program);
-    glUniform2f(glGetUniformLocation(m_quad_shader_program, "u_resolution"), (float)m_config.width, (float)m_config.height);
+    glUniform2f(m_res_loc, (float)m_config.width, (float)m_config.height);
     glBindVertexArray(m_quad_vao);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
@@ -272,16 +268,30 @@ void Application::setup_gpu_compute() {
     glBufferData(GL_SHADER_STORAGE_BUFFER, m_config.total_points * sizeof(Point), nullptr, GL_STATIC_DRAW);
 }
 
+void Application::query_uniform_locations() {
+    // Graphics program uniforms
+    m_proj_loc = glGetUniformLocation(m_point_shader_program, "projection");
+    m_res_loc = glGetUniformLocation(m_quad_shader_program, "u_resolution");
+    // Compute program uniforms
+    m_num_transforms_loc = glGetUniformLocation(m_compute_shader_program, "num_transforms");
+    m_total_points_loc = glGetUniformLocation(m_compute_shader_program, "total_points");
+    m_seed_loc = glGetUniformLocation(m_compute_shader_program, "seed");
+}
+
 void Application::generate_fractal_gpu(const std::vector<Transform>& frame_transforms) {
     if (frame_transforms.empty()) return;
+    
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_transforms_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, frame_transforms.size() * sizeof(Transform), frame_transforms.data(), GL_DYNAMIC_DRAW);
+    
     glUseProgram(m_compute_shader_program);
-    glUniform1ui(glGetUniformLocation(m_compute_shader_program, "num_transforms"), frame_transforms.size());
-    glUniform1ui(glGetUniformLocation(m_compute_shader_program, "total_points"), m_config.total_points);
+    
+    glUniform1ui(m_num_transforms_loc, frame_transforms.size());
+    glUniform1ui(m_total_points_loc, m_config.total_points);
     
     unsigned int current_seed = (m_config.fractal_seed == 0) ? m_rd() : m_config.fractal_seed;
-    glUniform1ui(glGetUniformLocation(m_compute_shader_program, "seed"), current_seed);
+    
+    glUniform1ui(m_seed_loc, current_seed);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, m_transforms_ssbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_points_ssbo);
     const unsigned int WORKGROUP_SIZE = 256;
