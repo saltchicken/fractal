@@ -195,6 +195,9 @@ int main() {
         glClear(GL_COLOR_BUFFER_BIT);
         
         glUseProgram(quadShaderProgram);
+        
+        glUniform2f(glGetUniformLocation(quadShaderProgram, "u_resolution"), (float)SCR_WIDTH, (float)SCR_HEIGHT);
+
         glBindVertexArray(quad_vao);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, fbo_texture);
