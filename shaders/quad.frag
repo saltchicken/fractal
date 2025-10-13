@@ -9,7 +9,7 @@ uniform vec2 u_resolution;
 // --- Tunable FXAA Parameters ---
 // Lower this to apply AA to lower contrast edges (more aggressive).
 // Good values are between 0.06 and 0.125.
-#define FXAA_CONTRAST_THRESHOLD 2.083
+#define FXAA_CONTRAST_THRESHOLD 0.083
 
 // --- End of Parameters ---
 

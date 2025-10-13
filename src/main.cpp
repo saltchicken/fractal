@@ -80,7 +80,6 @@ int main() {
     create_screen_quad();
     setup_gpu_compute();
     
-    // Load config states again now that GL is initialized. This is slightly redundant but safe.
     if (!load_config_states(CONFIG_FILENAME, config_states) || config_states.empty()) {
         std::cerr << "Config load failed or no states found. Please check " << CONFIG_FILENAME << std::endl;
         glfwTerminate();
@@ -88,94 +87,98 @@ int main() {
     }
     
     target_transforms = config_states[0];
-    previous_transforms = target_transforms; // Start with both states identical
+    previous_transforms = target_transforms;
     
     GLuint vao;
     glGenVertexArrays(1, &vao);
     last_frame_time = glfwGetTime();
 
+    interpolation_alpha = 1.0f;
+    state_timer = 0.0f;
+
     while (!glfwWindowShouldClose(window)) {
-        // --- Delta Time Calculation ---
         double current_time = glfwGetTime();
         float delta_time = static_cast<float>(current_time - last_frame_time);
         last_frame_time = current_time;
 
         glfwPollEvents();
 
-        // --- NEW: Corrected Interpolation & State Change Logic ---
-        // First, handle interpolation. This runs while we are in transition.
         if (interpolation_alpha < 1.0f) {
             interpolation_alpha += delta_time / INTERPOLATION_DURATION;
-            // When the transition finishes, clamp the value and reset the state timer
-            // so the new pause can begin.
             if (interpolation_alpha >= 1.0f) {
                 interpolation_alpha = 1.0f;
                 state_timer = 0.0f; 
             }
         } 
-        // If we are NOT in transition, run the pause timer.
         else if (config_states.size() > 1) {
             state_timer += delta_time;
-
-            // If the pause duration has been met, trigger the next transition.
             if (state_timer >= STATE_DURATION) {
-                // Set the current state as the starting point for interpolation
                 previous_transforms = config_states[current_state_index];
-
-                // Ping-Pong Logic
                 int next_state_index = current_state_index + animation_direction;
                 if (next_state_index >= config_states.size() || next_state_index < 0) {
-                    animation_direction *= -1; // Reverse direction
+                    animation_direction *= -1;
                     next_state_index = current_state_index + animation_direction;
                 }
                 current_state_index = next_state_index;
-                
-                // Set the new target state and start the interpolation
                 target_transforms = config_states[current_state_index];
                 interpolation_alpha = 0.0f;
                 std::cout << "Animating to state " << (current_state_index + 1) << "..." << std::endl;
             }
         }
         
-        std::vector<Transform> interpolated_transforms;
-        size_t num_target = target_transforms.size();
-        size_t num_previous = previous_transforms.size();
-        size_t render_list_size = std::max(num_target, num_previous);
-        interpolated_transforms.reserve(render_list_size);
-
-        for (size_t i = 0; i < render_list_size; ++i) {
-            bool is_appearing = (i >= num_previous);
-            bool is_disappearing = (i >= num_target);
-            Transform prev, target;
-
-            if (is_disappearing) {
-                prev = previous_transforms[i];
-                target = previous_transforms[i]; 
-                target.color.a = 0.0f;
-            } else if (is_appearing) {
-                target = target_transforms[i];
-                prev = target_transforms[i]; 
-                prev.color.a = 0.0f;
-            } else {
-                prev = previous_transforms[i];
-                target = target_transforms[i];
+        // --- NEW: Reworked interpolation logic ---
+        std::vector<Transform> final_transforms;
+        
+        // Check if the transforms have the same variations.
+        bool variations_are_compatible = true;
+        if (previous_transforms.size() != target_transforms.size()) {
+            variations_are_compatible = false;
+        } else {
+            for (size_t i = 0; i < target_transforms.size(); ++i) {
+                if (previous_transforms[i].variation.x != target_transforms[i].variation.x) {
+                    variations_are_compatible = false;
+                    break;
+                }
             }
-            
-            Transform interpolated;
-            interpolated.params1 = glm::mix(prev.params1, target.params1, interpolation_alpha);
-            interpolated.params2 = glm::mix(prev.params2, target.params2, interpolation_alpha);
-            interpolated.color = glm::mix(prev.color, target.color, interpolation_alpha);
-            interpolated.variation = (interpolation_alpha < 0.5f) ? prev.variation : target.variation;
-            
-            interpolated_transforms.push_back(interpolated);
+        }
+
+        // If variations are different, do a cross-fade. Otherwise, interpolate smoothly.
+        if (!variations_are_compatible) {
+            float fade_multiplier = 1.0f;
+            const auto* active_transforms = &target_transforms;
+
+            if (interpolation_alpha < 0.5f) {
+                active_transforms = &previous_transforms;
+                fade_multiplier = 1.0f - (interpolation_alpha / 0.5f); // Fade out
+            } else {
+                active_transforms = &target_transforms;
+                fade_multiplier = (interpolation_alpha - 0.5f) / 0.5f; // Fade in
+            }
+
+            final_transforms.reserve(active_transforms->size());
+            for (const auto& t : *active_transforms) {
+                Transform final_t = t;
+                final_t.color.a *= fade_multiplier;
+                final_transforms.push_back(final_t);
+            }
+        } else {
+            // Original smooth interpolation for compatible variations
+            size_t render_list_size = target_transforms.size();
+            final_transforms.reserve(render_list_size);
+            for (size_t i = 0; i < render_list_size; ++i) {
+                Transform interpolated;
+                interpolated.params1 = glm::mix(previous_transforms[i].params1, target_transforms[i].params1, interpolation_alpha);
+                interpolated.params2 = glm::mix(previous_transforms[i].params2, target_transforms[i].params2, interpolation_alpha);
+                interpolated.color = glm::mix(previous_transforms[i].color, target_transforms[i].color, interpolation_alpha);
+                interpolated.variation = target_transforms[i].variation;
+                final_transforms.push_back(interpolated);
+            }
         }
         
-        // Generate fractal every frame with the new interpolated data
-        if (!interpolated_transforms.empty()) {
-            generate_fractal_gpu(interpolated_transforms);
+        if (!final_transforms.empty()) {
+            generate_fractal_gpu(final_transforms);
         }
 
-        // --- Render Pass: Draw the generated points to the FBO ---
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -194,7 +197,6 @@ int main() {
         glDisable(GL_BLEND);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-        // --- Post-Processing Pass: Draw FBO texture to the screen quad ---
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         
@@ -208,7 +210,6 @@ int main() {
         glfwSwapBuffers(window);
     }
 
-    // --- Cleanup ---
     glDeleteVertexArrays(1, &vao);
     glDeleteVertexArrays(1, &quad_vao);
     glDeleteBuffers(1, &quad_vbo);
@@ -251,11 +252,9 @@ void setup_gpu_compute() {
 
     glGenBuffers(1, &points_ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, points_ssbo);
-    // This now correctly uses the TOTAL_POINTS value loaded from the config file in init_window()
     glBufferData(GL_SHADER_STORAGE_BUFFER, TOTAL_POINTS * sizeof(Point), nullptr, GL_STATIC_DRAW);
 }
 
-// CRASH FIX: This function no longer makes any OpenGL calls.
 bool load_config_states(const std::string& filename, std::vector<std::vector<Transform>>& out_states) {
     out_states.clear();
     simpleini::INIReader reader;
@@ -279,8 +278,8 @@ bool load_config_states(const std::string& filename, std::vector<std::vector<Tra
         
         for (const auto& pair : config_data) {
             const std::string& section_name = pair.first;
-            if (section_name.rfind("State.", 0) == 0) { // Section name starts with "State."
-                std::string temp = section_name.substr(6); // Remove "State."
+            if (section_name.rfind("State.", 0) == 0) {
+                std::string temp = section_name.substr(6);
                 size_t dot_pos = temp.find('.');
                 if (dot_pos == std::string::npos) continue;
 
@@ -336,7 +335,6 @@ GLFWwindow* init_window() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     
-    // Load config once to get initial window size and point count
     std::vector<std::vector<Transform>> initial_states;
     load_config_states(CONFIG_FILENAME, initial_states);
     
@@ -373,7 +371,6 @@ void create_framebuffer() {
 
 void create_screen_quad() {
     float quadVertices[] = { 
-        // positions   // texCoords
         -1.0f,  1.0f,  0.0f, 1.0f,
         -1.0f, -1.0f,  0.0f, 0.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
