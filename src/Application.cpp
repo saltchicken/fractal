@@ -23,6 +23,7 @@ void Application::on_window_resize(int width, int height) {
     if (width == 0 || height == 0) {
         return;
     }
+
     m_width = static_cast<unsigned int>(width);
     m_height = static_cast<unsigned int>(height);
 
@@ -32,7 +33,6 @@ void Application::on_window_resize(int width, int height) {
     
     std::cout << "Window resized to " << m_width << "x" << m_height << std::endl;
 }
-
 
 Application::Application() : m_rd_generator(m_rd()) {}
 
@@ -46,7 +46,9 @@ Application::~Application() {
     glDeleteTextures(1, &m_fbo_texture);
     glDeleteProgram(m_point_shader_program);
     glDeleteProgram(m_quad_shader_program);
+    glDeleteProgram(m_fade_shader_program); // Cleanup for the new shader
     glDeleteProgram(m_compute_shader_program);
+
     if (m_window) {
         glfwDestroyWindow(m_window);
     }
@@ -65,8 +67,10 @@ void Application::run() {
     // --- Initialization ---
     init_window();
     if (!m_window) return;
+
     m_point_shader_program = create_shader_program_from_files("shaders/vert/point.vert", "shaders/frag/point.frag");
     m_quad_shader_program = create_shader_program_from_files("shaders/vert/quad.vert", "shaders/frag/quad.frag");
+    m_fade_shader_program = create_shader_program_from_files("shaders/vert/quad.vert", "shaders/frag/fade.frag");
     m_compute_shader_program = create_compute_shader_program_from_file("shaders/comp/fractal.comp");
     
     query_uniform_locations(); // Query locations after creating shaders
@@ -87,6 +91,7 @@ void Application::run() {
         double current_time = glfwGetTime();
         float delta_time = static_cast<float>(current_time - m_last_frame_time);
         m_last_frame_time = current_time;
+
         process_input();
         update(delta_time);
         render();
@@ -149,6 +154,7 @@ void Application::check_for_config_updates() {
         if (current_write_time > m_last_config_write_time) {
             m_last_config_write_time = current_write_time;
             std::cout << "Config file changed, attempting to reload..." << std::endl;
+
             Config new_config;
             if (new_config.load("config.ini") && !new_config.getStates().empty()) {
                 m_config = new_config; // Replace the old config with the new one
@@ -163,7 +169,6 @@ void Application::check_for_config_updates() {
                 if (m_width != m_config.getWidth() || m_height != m_config.getHeight()) {
                     glfwSetWindowSize(m_window, m_config.getWidth(), m_config.getHeight());
                 }
-
                 // Re-initialize GPU buffers in case TotalPoints changed
                 setup_gpu_compute(); 
                 std::cout << "Successfully reloaded config.ini!" << std::endl;
@@ -200,7 +205,6 @@ void Application::render() {
             prev = m_previous_transforms[i];
             target = m_target_transforms[i];
         }
-
         Transform interpolated;
         interpolated.params1 = glm::mix(prev.params1, target.params1, m_interpolation_alpha);
         interpolated.params2 = glm::mix(prev.params2, target.params2, m_interpolation_alpha);
@@ -214,17 +218,28 @@ void Application::render() {
         generate_fractal_gpu(interpolated_transforms);
     }
 
+    // --- Render to Framebuffer ---
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
 
+    // --- 1. Fade Pass ---
+    // Draw a semi-transparent quad over the entire FBO to fade the previous frame.
+    glUseProgram(m_fade_shader_program);
+    glUniform1f(m_persistence_loc, m_config.getPersistence());
+    glEnable(GL_BLEND);
+    // This blend function multiplies the destination (the old frame) by the
+    // inverse of the source alpha.
+    glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
+    glBindVertexArray(m_quad_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    // --- 2. Point Pass ---
+    // Now, additively blend the new points on top of the faded image.
     glUseProgram(m_point_shader_program);
+    
     float zoom = m_config.getCameraZoom();
     float x_offset = m_config.getCameraX();
     float y_offset = m_config.getCameraY();
-    // Use current window dimensions for aspect ratio
     float aspect_ratio = (float)m_width / (float)m_height;
-    // Use a small epsilon to prevent division by zero if zoom is 0
     float half_height = 2.0f / (zoom < 1e-6f ? 1e-6f : zoom);
     float half_width = half_height * aspect_ratio;
     glm::mat4 projection = glm::ortho(
@@ -234,25 +249,24 @@ void Application::render() {
     );
     glUniformMatrix4fv(m_proj_loc, 1, GL_FALSE, glm::value_ptr(projection));
     
-    glEnable(GL_BLEND);
+    // Switch to additive blending for the points
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     
     glBindVertexArray(m_point_render_vao);
     glDrawArrays(GL_POINTS, 0, (GLsizei)m_config.getTotalPoints());
     
-    glDisable(GL_BLEND);
-
+    // --- Render to Screen ---
+    glDisable(GL_BLEND); // Disable blend for the final screen quad
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
     glUseProgram(m_quad_shader_program);
-    // Use current window dimensions for resolution uniform
     glUniform2f(m_res_loc, (float)m_width, (float)m_height);
     glUniform1f(m_brightness_loc, m_config.getBrightness());
     glUniform1f(m_contrast_loc, m_config.getContrast());
     glUniform1f(m_gamma_loc, m_config.getGamma());
-
     glBindVertexArray(m_quad_vao);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
@@ -266,62 +280,67 @@ void Application::init_window() {
         std::cerr << "Failed to initialize GLFW" << std::endl;
         return;
     }
+
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
 
-    // Initialize window dimensions from config
     m_width = m_config.getWidth();
     m_height = m_config.getHeight();
-
     m_window = glfwCreateWindow(m_width, m_height, "GPU Fractal Flame", NULL, NULL);
+
     if (!m_window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
         return;
     }
     
-    // Set user pointer and register resize callback
     glfwSetWindowUserPointer(m_window, this);
     glfwSetFramebufferSizeCallback(m_window, framebuffer_size_callback);
-
     glfwMakeContextCurrent(m_window);
+
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cerr << "Failed to initialize GLAD" << std::endl;
         return;
     }
     
-    // Set the initial viewport
     glViewport(0, 0, m_width, m_height);
     
     glEnable(GL_PROGRAM_POINT_SIZE);
 }
 
 void Application::recreate_framebuffer() {
-    // Delete old resources if they exist
     if (m_fbo) glDeleteFramebuffers(1, &m_fbo);
     if (m_fbo_texture) glDeleteTextures(1, &m_fbo_texture);
 
     glGenFramebuffers(1, &m_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+
     glGenTextures(1, &m_fbo_texture);
     glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
-    // Use current window dimensions to create the texture
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, m_width, m_height, 0, GL_RGBA, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_fbo_texture, 0);
+
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cerr << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!" << std::endl;
+    
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 void Application::create_screen_quad() {
-    float quadVertices[] = { -1.0f, 1.0f, 0.0f, 1.0f, -1.0f, -1.0f, 0.0f, 0.0f, 1.0f, -1.0f, 1.0f, 0.0f, -1.0f, 1.0f, 0.0f, 1.0f, 1.0f, -1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+    float quadVertices[] = { 
+        -1.0f,  1.0f, 0.0f, 1.0f,
+        -1.0f, -1.0f, 0.0f, 0.0f,
+         1.0f, -1.0f, 1.0f, 0.0f,
+        -1.0f,  1.0f, 0.0f, 1.0f,
+         1.0f, -1.0f, 1.0f, 0.0f,
+         1.0f,  1.0f, 1.0f, 1.0f 
+    };
     glGenVertexArrays(1, &m_quad_vao);
     glGenBuffers(1, &m_quad_vbo);
     glBindVertexArray(m_quad_vao);
@@ -338,7 +357,7 @@ void Application::setup_gpu_compute() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_transforms_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, 100 * sizeof(Transform), nullptr, GL_DYNAMIC_DRAW);
     
-    if (m_points_ssbo) glDeleteBuffers(1, &m_points_ssbo); // Delete old buffer before creating new one
+    if (m_points_ssbo) glDeleteBuffers(1, &m_points_ssbo);
     glGenBuffers(1, &m_points_ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_points_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, m_config.getTotalPoints() * sizeof(Point), nullptr, GL_STATIC_DRAW);
@@ -351,6 +370,7 @@ void Application::query_uniform_locations() {
     m_brightness_loc = glGetUniformLocation(m_quad_shader_program, "u_brightness");
     m_contrast_loc = glGetUniformLocation(m_quad_shader_program, "u_contrast");
     m_gamma_loc = glGetUniformLocation(m_quad_shader_program, "u_gamma");
+    m_persistence_loc = glGetUniformLocation(m_fade_shader_program, "u_persistence");
 
     // Compute program uniforms
     m_num_transforms_loc = glGetUniformLocation(m_compute_shader_program, "num_transforms");

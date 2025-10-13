@@ -36,6 +36,8 @@ public:
     float getContrast() const { return post_contrast; }
     float getGamma() const { return post_gamma; }
 
+    float getPersistence() const { return post_persistence; }
+
     long long getTotalPoints() const { return total_points; }
     float getInterpolationDuration() const { return interpolation_duration; }
     unsigned int getFractalSeed() const { return fractal_seed; }
@@ -54,6 +56,8 @@ private:
     float post_brightness = 1.0f;
     float post_contrast = 1.0f;
     float post_gamma = 1.2f;
+
+    float post_persistence = 0.95f; // Add this line
 
     long long total_points = 500000;
     float interpolation_duration = 2.0f;

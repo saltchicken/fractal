@@ -96,6 +96,7 @@ void Config::handle_post_processing(const std::string& name, const std::string& 
     if (name == "Brightness") post_brightness = std::stof(value);
     else if (name == "Contrast") post_contrast = std::stof(value);
     else if (name == "Gamma") post_gamma = std::stof(value);
+    else if (name == "Persistence") post_persistence = std::stof(value); // Add this line
 }
 
 void Config::handle_transform(const std::string& section, const std::string& name, const std::string& value) {
