@@ -17,6 +17,7 @@ find_package(glfw3 REQUIRED)
 set(SOURCE_FILES
     src/main.cpp
     src/Application.cpp # Add the new source file
+    src/Config.cpp
     src/Shader.cpp
     libs/glad/src/glad.c
 )
