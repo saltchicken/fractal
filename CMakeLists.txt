@@ -19,6 +19,7 @@ find_package(glfw3 REQUIRED)
 # List all source files for our executable
 set(SOURCE_FILES
     src/main.cpp
+    src/Shader.cpp
     libs/glad/src/glad.c
 )
 

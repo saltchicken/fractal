@@ -1,0 +1,80 @@
+#version 430 core
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Data Structures
+struct Point { vec4 position; vec4 color; };
+struct Transform { vec4 params1; vec4 params2; vec4 color; uvec4 variation; };
+
+// Buffers
+layout(std430, binding = 0) readonly buffer TransformBlock { Transform transforms[]; };
+layout(std430, binding = 1) buffer PointBlock { Point points[]; };
+
+// Uniforms
+uniform uint num_transforms;
+uniform uint total_points;
+uniform uint seed;
+
+// --- Helper Functions ---
+uint hash(uint x) {
+    x += (x << 10u);
+    x ^= (x >> 6u);
+    x += (x << 3u);
+    x ^= (x >> 11u);
+    x += (x << 15u);
+    return x;
+}
+
+float random(inout uint state) {
+    state = hash(state);
+    return float(state) / float(0xFFFFFFFFu);
+}
+
+vec2 apply_variations(vec2 p, uint var_enum) {
+    switch (var_enum) {
+        case 0: return p; // LINEAR
+        case 1: return sin(p); // SINUSOIDAL
+        case 2: // SPHERICAL
+            float r2_sph = dot(p, p);
+            if (r2_sph > 1e-6) return p / r2_sph;
+            return p;
+        case 3: // SWIRL
+            float r2_sw = dot(p, p);
+            return vec2(p.x*sin(r2_sw)-p.y*cos(r2_sw), p.x*cos(r2_sw)+p.y*sin(r2_sw));
+        case 4: // HORSESHOE
+            float r_hs = length(p);
+            if (r_hs > 1e-6) return vec2((p.x-p.y)*(p.x+p.y), 2.0*p.x*p.y)/r_hs;
+            return p;
+    }
+    return p;
+}
+
+// --- Main Execution ---
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= total_points) return;
+
+    uint rand_state = hash(index + seed);
+    vec2 current_point = vec2(random(rand_state) * 2.0 - 1.0, random(rand_state) * 2.0 - 1.0);
+    
+    // Warm-up iterations
+    for (int i = 0; i < 20; ++i) {
+        uint t_idx = uint(random(rand_state) * num_transforms);
+        Transform t = transforms[t_idx];
+        current_point = vec2(t.params1.x*current_point.x + t.params1.y*current_point.y + t.params1.z, t.params1.w*current_point.x + t.params2.x*current_point.y + t.params2.y);
+        current_point = apply_variations(current_point, t.variation.x);
+    }
+    
+    // Main iterations to find the final point position
+    uint last_t_idx = 0;
+    for (int i = 0; i < 150; i++) {
+        last_t_idx = uint(random(rand_state) * num_transforms);
+        Transform t = transforms[last_t_idx];
+        current_point = vec2(t.params1.x*current_point.x + t.params1.y*current_point.y + t.params1.z, t.params1.w*current_point.x + t.params2.x*current_point.y + t.params2.y);
+        current_point = apply_variations(current_point, t.variation.x);
+    }
+
+    vec3 final_color = transforms[last_t_idx].color.rgb;
+
+    points[index].position = vec4(current_point, 0.0, 1.0);
+    points[index].color = vec4(final_color, 0.15);
+}
