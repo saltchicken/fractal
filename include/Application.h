@@ -36,6 +36,9 @@ private:
     static constexpr float HOT_RELOAD_INTERVAL = 1.0f;
     float m_hot_reload_check_timer = 0.0f;
     std::filesystem::file_time_type m_last_config_write_time;
+
+    unsigned int m_frame_counter = 0;
+    double m_fps_timer = 0.0;
     
     double m_last_frame_time = 0.0;
     unsigned int m_width = 0;

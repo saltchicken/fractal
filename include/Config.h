@@ -54,6 +54,7 @@ public:
     unsigned int getWarmupIterations() const { return warmup_iterations; }
     unsigned int getMainIterations() const { return main_iterations; }
     float getPointAlpha() const { return point_alpha; }
+    unsigned int getTargetFPS() const { return target_fps; }
     const std::vector<std::vector<Transform>>& getStates() const { return states; }
 
     void setCameraX(float val) { camera_x = val; }
@@ -86,6 +87,7 @@ private:
     unsigned int warmup_iterations = 20;
     unsigned int main_iterations = 150;
     float point_alpha = 0.15f;
+    unsigned int target_fps = 0; // Add this member variable
 
     // Parsed fractal states
     std::vector<std::vector<Transform>> states;

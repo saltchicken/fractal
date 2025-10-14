@@ -7,6 +7,9 @@
 #include <algorithm> // Required for std::min
 #include <GLFW/glfw3.h> // For glfwGetTime
 #include <gtc/type_ptr.hpp> // Required for glm::mix
+#include <string>   // Add for std::to_string
+#include <thread>   // Add for std::this_thread::sleep_for
+#include <chrono>   // Add for std::chrono::duration
 
 Application::Application(int argc, char* argv[]) {
     cxxopts::Options options("FractalFlame", "A GPU-accelerated fractal flame renderer");
@@ -53,11 +56,27 @@ void Application::run() {
     m_window->setResizeCallback([this](int width, int height) {
         this->handleWindowResize(width, height);
     });
+    
+    double target_frame_time = 0.0;
+    unsigned int target_fps = m_config.getTargetFPS();
+    if (target_fps > 0) {
+        target_frame_time = 1.0 / static_cast<double>(target_fps);
+    }
+    
     m_last_frame_time = glfwGetTime();
     while (!m_window->shouldClose()) {
         double current_time = glfwGetTime();
         float delta_time = static_cast<float>(current_time - m_last_frame_time);
         m_last_frame_time = current_time;
+        m_fps_timer += delta_time;
+        m_frame_counter++;
+        if (m_fps_timer >= 1.0) {
+            std::cout << "FPS: " << m_frame_counter << std::endl;
+            // std::string title = "GPU Fractal Flame - FPS: " + std::to_string(m_frame_counter);
+            // glfwSetWindowTitle(m_window->getNativeWindow(), title.c_str());
+            m_frame_counter = 0;
+            m_fps_timer -= 1.0; // TODO: Should I set this to 0.0f?
+        }
         m_window->pollEvents();
         m_window->processInput();
         m_hot_reload_check_timer -= delta_time;
@@ -84,6 +103,15 @@ void Application::run() {
         
         m_renderer->render(m_config, m_animator->getInterpolatedTransforms(), m_width, m_height);
         m_window->swapBuffers();
+
+        if (target_frame_time > 0.0) {
+            double time_spent_this_frame = glfwGetTime() - current_time;
+            if (time_spent_this_frame < target_frame_time) {
+                // We finished the frame early, so wait for the remaining time
+                auto sleep_duration = std::chrono::duration<double>(target_frame_time - time_spent_this_frame);
+                std::this_thread::sleep_for(sleep_duration);
+            }
+        }
     }
 }
 

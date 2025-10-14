@@ -75,6 +75,7 @@ void Config::handle_settings(const std::string& name, const std::string& value) 
     else if (name == "WarmupIterations") warmup_iterations = std::stoul(value);
     else if (name == "MainIterations") main_iterations = std::stoul(value);
     else if (name == "PointAlpha") point_alpha = std::stof(value);
+    else if (name == "TargetFPS") target_fps = std::stoul(value); // Add this line
     else if (name == "Seed") {
         fractal_seed = std::stoul(value);
         if (fractal_seed != 0) {
