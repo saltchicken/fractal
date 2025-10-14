@@ -18,6 +18,23 @@ namespace {
         }
         return "UNKNOWN";
     }
+
+    // NEW: Helper function to print the details of a given state
+    void print_state_details(const std::string& title, const std::vector<Transform>& transforms) {
+        if (transforms.empty()) {
+            std::cout << title << " (State is empty)" << std::endl;
+            return;
+        }
+        std::cout << title << " with " << transforms.size() << " transforms:" << std::endl;
+        for (size_t i = 0; i < transforms.size(); ++i) {
+            const auto& t = transforms[i];
+            std::cout << "  Transform " << i + 1 << ":" << std::endl;
+            std::cout << "    a=" << t.params1.x << ", b=" << t.params1.y << ", c=" << t.params1.z
+                      << ", d=" << t.params1.w << ", e=" << t.params2.x << ", f=" << t.params2.y << std::endl;
+            std::cout << "    color=(" << t.color.r << ", " << t.color.g << ", " << t.color.b << ")" << std::endl;
+            std::cout << "    variation=" << variation_to_string(static_cast<Variation>(t.variation.x)) << std::endl;
+        }
+    }
 }
 
 Animator::Animator() : m_rd_generator(m_rd()) {}
@@ -25,12 +42,16 @@ Animator::Animator() : m_rd_generator(m_rd()) {}
 void Animator::reset(const Config& config) {
     m_interpolation_alpha = 1.0f;
     m_animation_direction = 1;
+
     if (config.getAnimationMode() == RANDOM) {
         m_target_transforms = generate_random_state(config);
     } else if (!config.getStates().empty()) {
         m_current_state_index = std::min(m_current_state_index, (int)config.getStates().size() - 1);
         m_current_state_index = std::max(0, m_current_state_index);
         m_target_transforms = config.getStates()[m_current_state_index];
+        // Print details for the initial state
+        std::string title = "Rendering initial State " + std::to_string(m_current_state_index + 1);
+        print_state_details(title, m_target_transforms);
     } else {
         m_target_transforms.clear();
     }
@@ -50,27 +71,29 @@ void Animator::update(float delta_time, const Config& config) {
             } else {
                 m_previous_transforms = config.getStates()[m_current_state_index];
                 const auto& states = config.getStates();
+                int next_idx = m_current_state_index;
                 if (config.getAnimationMode() == PING_PONG) {
-                    int next_idx = m_current_state_index + m_animation_direction;
+                    next_idx = m_current_state_index + m_animation_direction;
                     if (next_idx >= (int)states.size() || next_idx < 0) {
                         m_animation_direction *= -1;
                         next_idx = m_current_state_index + m_animation_direction;
                     }
-                    m_current_state_index = next_idx;
                 } else if (config.getAnimationMode() == LOOP) {
-                    m_current_state_index = (m_current_state_index + 1) % states.size();
+                    next_idx = (m_current_state_index + 1) % states.size();
                 } else if (config.getAnimationMode() == BOUNCE) {
                     if (states.size() > 1) {
                         std::uniform_int_distribution<int> dist(0, (int)states.size() - 1);
-                        int next_idx = m_current_state_index;
                         while (next_idx == m_current_state_index) {
                             next_idx = dist(m_rd_generator);
                         }
-                        m_current_state_index = next_idx;
                     }
                 }
+                m_current_state_index = next_idx;
                 m_target_transforms = states[m_current_state_index];
-                std::cout << "Animating to state " << (m_current_state_index + 1) << "..." << std::endl;
+                
+                // Print details when animating to a new state
+                std::string title = "Animating to State " + std::to_string(m_current_state_index + 1);
+                print_state_details(title, m_target_transforms);
             }
         }
     } else {
@@ -128,7 +151,7 @@ std::vector<Transform> Animator::generate_random_state(const Config& config) {
 
     // Primary logic: Use State.1 from the config as a template if it exists.
     if (!config_states.empty() && !config_states[0].empty()) {
-        generation_method = "from State.1 template";
+        generation_method = "Generated new random state from State.1 template";
         const auto& template_state = config_states[0];
         new_state.reserve(template_state.size());
 
@@ -137,11 +160,11 @@ std::vector<Transform> Animator::generate_random_state(const Config& config) {
             t.params1 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f));
             t.params2 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), 0.f, 0.f);
             t.color = glm::vec4(rand_float(0.f, 1.f), rand_float(0.f, 1.f), rand_float(0.f, 1.f), 0.15f);
-            t.variation = t_template.variation; // Keep the variation from the template
+            t.variation = t_template.variation;
             new_state.push_back(t);
         }
     } else { // --- Fallback Logic ---
-        generation_method = "fully random";
+        generation_method = "Generated new fully random state";
         std::uniform_int_distribution<int> num_dist(2, 4);
         int num_transforms = num_dist(m_rd_generator);
         new_state.reserve(num_transforms);
@@ -165,16 +188,8 @@ std::vector<Transform> Animator::generate_random_state(const Config& config) {
         }
     }
 
-    // Common logging for both cases to display all parameters
-    std::cout << "Generated new " << generation_method << " state with " << new_state.size() << " transforms:" << std::endl;
-    for (size_t i = 0; i < new_state.size(); ++i) {
-        const auto& t = new_state[i];
-        std::cout << "  Transform " << i + 1 << ":" << std::endl;
-        std::cout << "    a=" << t.params1.x << ", b=" << t.params1.y << ", c=" << t.params1.z
-                  << ", d=" << t.params1.w << ", e=" << t.params2.x << ", f=" << t.params2.y << std::endl;
-        std::cout << "    color=(" << t.color.r << ", " << t.color.g << ", " << t.color.b << ")" << std::endl;
-        std::cout << "    variation=" << variation_to_string(static_cast<Variation>(t.variation.x)) << std::endl;
-    }
+    // Use the helper to print details for the new random state
+    print_state_details(generation_method, new_state);
 
     return new_state;
 }
