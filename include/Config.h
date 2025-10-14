@@ -5,7 +5,10 @@
 #include <random>
 
 // Configuration-related data structures
-enum Variation { LINEAR, SINUSOIDAL, SPHERICAL, SWIRL, HORSESHOE };
+enum Variation { LINEAR, SINUSOIDAL, SPHERICAL, SWIRL, HORSESHOE,
+                 POLAR, HEART, DISK, SPIRAL, HYPERBOLIC,
+                 VARIATION_COUNT
+};
 
 struct Transform {
     // Maps to affine transform:

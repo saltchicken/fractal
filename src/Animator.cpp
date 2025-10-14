@@ -10,7 +10,9 @@ namespace {
     std::string variation_to_string(Variation var) {
         static const std::map<Variation, std::string> reverse_variation_map = {
             {LINEAR, "LINEAR"}, {SINUSOIDAL, "SINUSOIDAL"}, {SPHERICAL, "SPHERICAL"},
-            {SWIRL, "SWIRL"}, {HORSESHOE, "HORSESHOE"}
+            {SWIRL, "SWIRL"}, {HORSESHOE, "HORSESHOE"}, {POLAR, "POLAR"},
+            {HEART, "HEART"}, {DISK, "DISK"}, {SPIRAL, "SPIRAL"},
+            {HYPERBOLIC, "HYPERBOLIC"}
         };
         auto it = reverse_variation_map.find(var);
         if (it != reverse_variation_map.end()) {
@@ -19,7 +21,7 @@ namespace {
         return "UNKNOWN";
     }
 
-    // NEW: Helper function to print the details of a given state
+    // Helper function to print the details of a given state
     void print_state_details(const std::string& title, const std::vector<Transform>& transforms) {
         if (transforms.empty()) {
             std::cout << title << " (State is empty)" << std::endl;
