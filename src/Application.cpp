@@ -78,7 +78,39 @@ std::vector<Transform> Application::generate_random_state() {
         return dist(m_rd_generator);
     };
 
-    // A lambda to generate a random variation from the enum
+    const auto& config_states = m_config.getStates();
+
+    // If State.1 is defined, use it as a template to maintain structure.
+    if (!config_states.empty() && !config_states[0].empty()) {
+        const auto& template_state = config_states[0];
+        std::vector<Transform> new_state;
+        new_state.reserve(template_state.size());
+
+        for (const auto& template_transform : template_state) {
+            Transform t;
+            // Randomize affine transform parameters
+            t.params1.x = rand_float(-1.2f, 1.2f); // a
+            t.params1.y = rand_float(-1.2f, 1.2f); // b
+            t.params1.z = rand_float(-1.2f, 1.2f); // c (translation x)
+            t.params1.w = rand_float(-1.2f, 1.2f); // d
+            t.params2.x = rand_float(-1.2f, 1.2f); // e
+            t.params2.y = rand_float(-1.2f, 1.2f); // f (translation y)
+
+            // Randomize color
+            glm::vec3 color_vec(rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f));
+            t.color = glm::vec4(color_vec, 0.15f); // Use a fixed alpha
+
+            // Keep the variation from the template
+            t.variation = template_transform.variation;
+
+            new_state.push_back(t);
+        }
+        std::cout << "Generated new random state from State.1 template..." << std::endl;
+        return new_state;
+    }
+
+    // --- Fallback to old behavior if State.1 is not defined ---
+    std::cout << "State.1 not found. Generating a fully random state..." << std::endl;
     auto rand_variation = [this]() {
         std::uniform_int_distribution<int> dist(0, HORSESHOE); // Assumes HORSESHOE is the last enum value
         return static_cast<Variation>(dist(m_rd_generator));
@@ -88,9 +120,8 @@ std::vector<Transform> Application::generate_random_state() {
     
     // Generate between 2 and 4 transforms for more variety
     std::uniform_int_distribution<int> num_dist(2, 4);
-    int num_transforms = num_dist(m_rd_generator); 
+    int num_transforms = num_dist(m_rd_generator);  
     new_state.reserve(num_transforms);
-
     for (int i = 0; i < num_transforms; ++i) {
         Transform t;
         // Affine transform parameters
@@ -104,7 +135,6 @@ std::vector<Transform> Application::generate_random_state() {
         // Color
         glm::vec3 color_vec(rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f));
         t.color = glm::vec4(color_vec, 0.15f); // Use a fixed alpha like in Config.cpp
-
         // Variation
         t.variation.x = rand_variation();
         
