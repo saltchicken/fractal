@@ -32,9 +32,12 @@ find_package(glfw3 REQUIRED)
 # List all source files for our executable
 set(SOURCE_FILES
     src/main.cpp
-    src/Application.cpp # Add the new source file
+    src/Application.cpp
     src/Config.cpp
     src/Shader.cpp
+    src/Window.cpp
+    src/Renderer.cpp
+    src/Animator.cpp
     libs/glad/src/glad.c
 )
 
