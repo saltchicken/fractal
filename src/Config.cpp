@@ -82,6 +82,7 @@ void Config::handle_settings(const std::string& name, const std::string& value) 
         std::transform(mode_str.begin(), mode_str.end(), mode_str.begin(), ::tolower);
         if (mode_str == "loop") animation_mode = LOOP;
         else if (mode_str == "random") animation_mode = RANDOM;
+        else if (mode_str == "bounce") animation_mode = BOUNCE;
         else animation_mode = PING_PONG;
     }
 }
@@ -96,21 +97,18 @@ void Config::handle_post_processing(const std::string& name, const std::string& 
     if (name == "Brightness") post_brightness = std::stof(value);
     else if (name == "Contrast") post_contrast = std::stof(value);
     else if (name == "Gamma") post_gamma = std::stof(value);
-    else if (name == "Persistence") post_persistence = std::stof(value); // Add this line
-    else if (name == "DenoiseFactor") post_denoise_factor = std::stof(value); // Add this line
+    else if (name == "Persistence") post_persistence = std::stof(value);
+    else if (name == "DenoiseFactor") post_denoise_factor = std::stof(value);
 }
 
 void Config::handle_transform(const std::string& section, const std::string& name, const std::string& value) {
     int state_num, transform_num;
     if (sscanf(section.c_str(), "State.%d.Transform.%d", &state_num, &transform_num) != 2) return;
     if (state_num <= 0 || transform_num <= 0) return; // Indices must be 1-based
-
     if (state_num > states.size()) states.resize(state_num);
     std::vector<Transform>& current_transforms = states[state_num - 1];
     if (transform_num > current_transforms.size()) current_transforms.resize(transform_num);
-
     Transform& t = current_transforms[transform_num - 1];
-
     if (name == "a") t.params1.x = parse_float_or_random(value);
     else if (name == "b") t.params1.y = parse_float_or_random(value);
     else if (name == "c") t.params1.z = parse_float_or_random(value);
@@ -143,7 +141,7 @@ int Config::handler(void* user, const char* section, const char* name, const cha
         pconfig->handle_settings(name, value);
     } else if (strcmp(section, "Camera") == 0) {
         pconfig->handle_camera(name, value);
-    } else if (strcmp(section, "PostProcessing") == 0) { // Add this else if block
+    } else if (strcmp(section, "PostProcessing") == 0) {
         pconfig->handle_post_processing(name, value);
     } else if (strncmp(section, "State.", 6) == 0) {
         pconfig->handle_transform(section, name, value);
@@ -154,12 +152,10 @@ int Config::handler(void* user, const char* section, const char* name, const cha
 bool Config::load(const std::string& filename) {
     states.clear();
     rng.seed(std::random_device{}());
-
     if (ini_parse(filename.c_str(), handler, this) < 0) {
         std::cerr << "Failed to load " << filename << std::endl;
         return false;
     }
-
     // Remove any empty states that might have been created if the user
     // defines states out of order (e.g., State.1 and State.3 but not State.2)
     states.erase(
@@ -167,6 +163,5 @@ bool Config::load(const std::string& filename) {
                        [](const std::vector<Transform>& s) { return s.empty(); }),
         states.end()
     );
-
     return true;
 }

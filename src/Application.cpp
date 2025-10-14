@@ -35,18 +35,15 @@ void Application::on_window_resize(int width, int height) {
 
 Application::Application(int argc, char* argv[]) : m_rd_generator(m_rd()) {
     cxxopts::Options options("FractalFlame", "A GPU-accelerated fractal flame renderer");
-
     options.add_options()
         ("c,config", "Path to the configuration INI file", cxxopts::value<std::string>()->default_value("config.ini"))
         ("h,help", "Print usage information");
     
     auto result = options.parse(argc, argv);
-
     if (result.count("help")) {
         std::cout << options.help() << std::endl;
         exit(0); // Exit cleanly after showing help
     }
-
     // Initialize member variable from the parsed option
     m_config_path = result["config"].as<std::string>();
     
@@ -66,7 +63,7 @@ Application::~Application() {
     
     glDeleteProgram(m_point_shader_program);
     glDeleteProgram(m_quad_shader_program);
-    glDeleteProgram(m_fade_shader_program); // Cleanup for the new shader
+    glDeleteProgram(m_fade_shader_program);
     glDeleteProgram(m_compute_shader_program);
     if (m_window) {
         glfwDestroyWindow(m_window);
@@ -74,10 +71,58 @@ Application::~Application() {
     glfwTerminate();
 }
 
+std::vector<Transform> Application::generate_random_state() {
+    // A lambda to generate random floats in a range, using our member generator
+    auto rand_float = [this](float min, float max) {
+        std::uniform_real_distribution<float> dist(min, max);
+        return dist(m_rd_generator);
+    };
+
+    // A lambda to generate a random variation from the enum
+    auto rand_variation = [this]() {
+        std::uniform_int_distribution<int> dist(0, HORSESHOE); // Assumes HORSESHOE is the last enum value
+        return static_cast<Variation>(dist(m_rd_generator));
+    };
+
+    std::vector<Transform> new_state;
+    
+    // Generate between 2 and 4 transforms for more variety
+    std::uniform_int_distribution<int> num_dist(2, 4);
+    int num_transforms = num_dist(m_rd_generator); 
+    new_state.reserve(num_transforms);
+
+    for (int i = 0; i < num_transforms; ++i) {
+        Transform t;
+        // Affine transform parameters
+        t.params1.x = rand_float(-1.2f, 1.2f); // a
+        t.params1.y = rand_float(-1.2f, 1.2f); // b
+        t.params1.z = rand_float(-1.2f, 1.2f); // c (translation x)
+        t.params1.w = rand_float(-1.2f, 1.2f); // d
+        t.params2.x = rand_float(-1.2f, 1.2f); // e
+        t.params2.y = rand_float(-1.2f, 1.2f); // f (translation y)
+        
+        // Color
+        glm::vec3 color_vec(rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f));
+        t.color = glm::vec4(color_vec, 0.15f); // Use a fixed alpha like in Config.cpp
+
+        // Variation
+        t.variation.x = rand_variation();
+        
+        new_state.push_back(t);
+    }
+    
+    return new_state;
+}
+
 void Application::run() {
     // --- Load Configuration ---
-    if (!m_config.load(m_config_path) || m_config.getStates().empty()) {
-        std::cerr << "Config load failed or no states found. Please check " << m_config_path << std::endl;
+    if (!m_config.load(m_config_path)) {
+        std::cerr << "Config load failed. Please check " << m_config_path << std::endl;
+        return;
+    }
+    // If not in random mode, we require states to be present in the config file.
+    if (m_config.getAnimationMode() != RANDOM && m_config.getStates().empty()) {
+        std::cerr << "No states found in config and not in random generation mode." << std::endl;
         return;
     }
     m_last_config_write_time = std::filesystem::last_write_time(m_config_path);
@@ -93,12 +138,18 @@ void Application::run() {
     
     query_uniform_locations(); // Query locations after creating shaders
     
-    recreate_framebuffer(); // Changed from create_framebuffer
+    recreate_framebuffer();
     create_screen_quad();
     setup_gpu_compute();
     
     // --- Initialize Animation State ---
-    m_target_transforms = m_config.getStates()[0];
+    if (m_config.getAnimationMode() == RANDOM) {
+        // For random mode, start with a newly generated state. The INI states are ignored.
+        m_target_transforms = generate_random_state();
+    } else {
+        // For other modes, use the first state from the INI file.
+        m_target_transforms = m_config.getStates()[0];
+    }
     m_previous_transforms = m_target_transforms;
     
     glGenVertexArrays(1, &m_point_render_vao);
@@ -131,36 +182,48 @@ void Application::update(float delta_time) {
     }
     
     // Animation interpolation logic
-    if (m_config.getStates().size() > 1) {
+    // We can animate if there's more than one state, OR if the mode is RANDOM (for generation).
+    if (m_config.getStates().size() > 1 || m_config.getAnimationMode() == RANDOM) {
         m_interpolation_alpha += delta_time / m_config.getInterpolationDuration();
         if (m_interpolation_alpha >= 1.0f) {
-            m_previous_transforms = m_config.getStates()[m_current_state_index];
+            m_interpolation_alpha = fmod(m_interpolation_alpha, 1.0f);
             
-            if (m_config.getAnimationMode() == PING_PONG) {
-                int next_state_index = m_current_state_index + m_animation_direction;
-                if (next_state_index >= (int)m_config.getStates().size() || next_state_index < 0) {
-                    m_animation_direction *= -1;
-                    next_state_index = m_current_state_index + m_animation_direction;
-                }
-                m_current_state_index = next_state_index;
-            } else if (m_config.getAnimationMode() == LOOP) {
-                m_current_state_index = (m_current_state_index + 1) % m_config.getStates().size();
-            } else { // RANDOM
-                if (m_config.getStates().size() > 1) {
-                    std::uniform_int_distribution<int> dist(0, (int)m_config.getStates().size() - 1);
-                    int next_state_index = m_current_state_index;
-                    while (next_state_index == m_current_state_index) {
-                        next_state_index = dist(m_rd_generator);
+            if (m_config.getAnimationMode() == RANDOM) {
+                // For RANDOM mode, we generate a new state instead of using the INI file.
+                m_previous_transforms = m_target_transforms;
+                m_target_transforms = generate_random_state();
+                std::cout << "Animating to new random state..." << std::endl;
+            } else {
+                // For PING_PONG, LOOP, and BOUNCE, we cycle through the pre-loaded states.
+                m_previous_transforms = m_config.getStates()[m_current_state_index];
+                
+                if (m_config.getAnimationMode() == PING_PONG) {
+                    int next_state_index = m_current_state_index + m_animation_direction;
+                    if (next_state_index >= (int)m_config.getStates().size() || next_state_index < 0) {
+                        m_animation_direction *= -1;
+                        next_state_index = m_current_state_index + m_animation_direction;
                     }
                     m_current_state_index = next_state_index;
+                } else if (m_config.getAnimationMode() == LOOP) {
+                    m_current_state_index = (m_current_state_index + 1) % m_config.getStates().size();
+                } else if (m_config.getAnimationMode() == BOUNCE) {
+                    // This is the old "random" logic of picking a new state from the list.
+                    if (m_config.getStates().size() > 1) {
+                        std::uniform_int_distribution<int> dist(0, (int)m_config.getStates().size() - 1);
+                        int next_state_index = m_current_state_index;
+                        while (next_state_index == m_current_state_index) {
+                            next_state_index = dist(m_rd_generator);
+                        }
+                        m_current_state_index = next_state_index;
+                    }
                 }
+                
+                m_target_transforms = m_config.getStates()[m_current_state_index];
+                std::cout << "Animating to state " << (m_current_state_index + 1) << "..." << std::endl;
             }
-            
-            m_target_transforms = m_config.getStates()[m_current_state_index];
-            m_interpolation_alpha = fmod(m_interpolation_alpha, 1.0f);
-            std::cout << "Animating to state " << (m_current_state_index + 1) << "..." << std::endl;
         }
     } else {
+        // If there's only one state and we're not in random mode, just stay put.
         m_interpolation_alpha = 1.0f;
     }
 }
@@ -172,25 +235,34 @@ void Application::check_for_config_updates() {
             m_last_config_write_time = current_write_time;
             std::cout << m_config_path << " changed, attempting to reload..." << std::endl;
             Config new_config;
-            if (new_config.load(m_config_path) && !new_config.getStates().empty()) {
+            if (new_config.load(m_config_path) && (new_config.getAnimationMode() == RANDOM || !new_config.getStates().empty())) {
                 m_config = new_config; // Replace the old config with the new one
+                
                 // Gracefully reset the animation
-                m_current_state_index = std::min(m_current_state_index, (int)m_config.getStates().size() - 1);
-                m_current_state_index = std::max(0, m_current_state_index);
-                m_target_transforms = m_config.getStates()[m_current_state_index];
+                if (m_config.getAnimationMode() == RANDOM) {
+                    // For random mode, we start fresh with a new generated state
+                    m_target_transforms = generate_random_state();
+                } else {
+                    // For other modes, reset to a valid index from the INI file.
+                    m_current_state_index = std::min(m_current_state_index, (int)m_config.getStates().size() - 1);
+                    m_current_state_index = std::max(0, m_current_state_index);
+                    m_target_transforms = m_config.getStates()[m_current_state_index];
+                }
+
                 m_previous_transforms = m_target_transforms;
                 m_interpolation_alpha = 1.0f;
+
                 // If window dimensions changed in config, resize the window
                 if (m_width != m_config.getWidth() || m_height != m_config.getHeight()) {
                     glfwSetWindowSize(m_window, m_config.getWidth(), m_config.getHeight());
                 }
                 // Re-initialize GPU buffers in case TotalPoints changed
                 setup_gpu_compute();
-
-                // TODO: Is this necessary?
+                
                 glBindFramebuffer(GL_FRAMEBUFFER, m_accumulation_fbo);
                 glClear(GL_COLOR_BUFFER_BIT);
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
                 std::cout << "Successfully reloaded " << m_config_path << "!" << std::endl;
             } else {
                 std::cerr << "Failed to reload " << m_config_path << ", keeping old settings." << std::endl;
@@ -203,8 +275,6 @@ void Application::check_for_config_updates() {
 
 void Application::render() {
     // --- PART 0: Calculate Interpolated Transforms ---
-    // This part calculates the current state of the fractal transforms based on animation progress.
-    // It remains unchanged from before.
     std::vector<Transform> interpolated_transforms;
     size_t num_target = m_target_transforms.size();
     size_t num_previous = m_previous_transforms.size();
@@ -234,22 +304,21 @@ void Application::render() {
         
         interpolated_transforms.push_back(interpolated);
     }
-    // Generate the point cloud for the current frame using the compute shader
+
     if (!interpolated_transforms.empty()) {
         generate_fractal_gpu(interpolated_transforms);
     }
+
     // --- PART 1: Render Raw Points with Motion Blur ---
-    // We bind our primary framebuffer (m_fbo) to draw the new points into it.
-    // This pass creates the motion blur trails.
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     glEnable(GL_BLEND);
-    // A. Fade Pass: Draw a semi-transparent black quad over the last frame's content in this FBO.
+    // A. Fade Pass:
     glUseProgram(m_fade_shader_program);
     glUniform1f(m_persistence_loc, m_config.getPersistence());
-    glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA); // Correct blend function for persistence
+    glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
     glBindVertexArray(m_quad_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
-    // B. Point Pass: Additively draw the new points on top of the faded image.
+    // B. Point Pass:
     glUseProgram(m_point_shader_program);
     float zoom = m_config.getCameraZoom();
     float x_offset = m_config.getCameraX();
@@ -263,49 +332,39 @@ void Application::render() {
         -1.0f, 1.0f
     );
     glUniformMatrix4fv(m_proj_loc, 1, GL_FALSE, glm::value_ptr(projection));
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Switch to additive blending
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glBindVertexArray(m_point_render_vao);
     glDrawArrays(GL_POINTS, 0, (GLsizei)m_config.getTotalPoints());
+
     // --- PART 2: Accumulation Pass for Denoising ---
-    // We bind the accumulation framebuffer to blend the newly rendered points (with motion blur)
-    // into our historical average, which smooths out the grain.
     glBindFramebuffer(GL_FRAMEBUFFER, m_accumulation_fbo);
     glUseProgram(m_quad_shader_program);
-    glDisable(GL_BLEND); // Blending is done inside the shader with mix()
-    // Set the blend factor to tell the shader we are in accumulation mode
+    glDisable(GL_BLEND);
     glUniform1f(m_blend_factor_loc, m_config.getDenoiseFactor());
-    // Bind the texture from the primary FBO (current frame) to texture unit 0
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
     glUniform1i(glGetUniformLocation(m_quad_shader_program, "screenTexture"), 0);
-    // Bind the accumulation texture (historical frames) to texture unit 1
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, m_accumulation_texture);
     glUniform1i(m_accumulation_sampler_loc, 1);
-    // Draw the quad. The shader will read from both textures and write the blended result
-    // back into the accumulation texture attached to this FBO.
     glBindVertexArray(m_quad_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
+
     // --- PART 3: Final Display Pass ---
-    // Unbind any framebuffer, which means we are now drawing to the screen.
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClear(GL_COLOR_BUFFER_BIT);
-    // Use the same quad shader, but switch it to display mode
     glUseProgram(m_quad_shader_program);
-    glUniform1f(m_blend_factor_loc, 0.0f); // A blend factor of 0 triggers the final post-fx path
-    // Set all post-processing uniforms
+    glUniform1f(m_blend_factor_loc, 0.0f);
     glUniform2f(m_res_loc, (float)m_width, (float)m_height);
     glUniform1f(m_brightness_loc, m_config.getBrightness());
     glUniform1f(m_contrast_loc, m_config.getContrast());
     glUniform1f(m_gamma_loc, m_config.getGamma());
-    // Bind the final, denoised image from the accumulation texture to be processed and displayed
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_accumulation_texture);
     glUniform1i(glGetUniformLocation(m_quad_shader_program, "screenTexture"), 0);
-    // Draw the final image to the screen
     glBindVertexArray(m_quad_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
-    // Swap the front and back buffers to display the rendered frame
+
     glfwSwapBuffers(m_window);
 }
 
@@ -346,6 +405,7 @@ void Application::recreate_framebuffer() {
     if (m_fbo_texture) glDeleteTextures(1, &m_fbo_texture);
     if (m_accumulation_fbo) glDeleteFramebuffers(1, &m_accumulation_fbo);
     if (m_accumulation_texture) glDeleteTextures(1, &m_accumulation_texture);
+
     // --- Main FBO (for raw points) ---
     glGenFramebuffers(1, &m_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
@@ -355,6 +415,7 @@ void Application::recreate_framebuffer() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_fbo_texture, 0);
+
     // --- Accumulation FBO (for denoised image) ---
     glGenFramebuffers(1, &m_accumulation_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, m_accumulation_fbo);
@@ -377,6 +438,7 @@ void Application::create_screen_quad() {
         -1.0f,  1.0f, 0.0f, 1.0f,
         -1.0f, -1.0f, 0.0f, 0.0f,
          1.0f, -1.0f, 1.0f, 0.0f,
+
         -1.0f,  1.0f, 0.0f, 1.0f,
          1.0f, -1.0f, 1.0f, 0.0f,
          1.0f,  1.0f, 1.0f, 1.0f 
