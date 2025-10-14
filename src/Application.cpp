@@ -88,11 +88,13 @@ void Application::check_for_config_updates() {
             
             Config new_config;
             if (new_config.load(m_config_path)) {
-                // Heuristic: A "structural change" is anything that alters the fractal's
-                // points or the animation sequence. Post-processing and camera changes are not structural.
-                bool structural_change =
-                    m_config.getTotalPoints() != new_config.getTotalPoints() ||
-                    m_config.getInterpolationDuration() != new_config.getInterpolationDuration() ||
+                // --- Compare old and new config states ---
+                
+                // Check for changes that require re-creating GPU buffers
+                bool points_changed = m_config.getTotalPoints() != new_config.getTotalPoints();
+
+                // Check for changes that require resetting the animation sequence
+                bool animation_sequence_changed =
                     m_config.getAnimationMode() != new_config.getAnimationMode() ||
                     m_config.getStates().size() != new_config.getStates().size() ||
                     m_config.getFractalSeed() != new_config.getFractalSeed();
@@ -103,14 +105,18 @@ void Application::check_for_config_updates() {
                 // Atomically update the config
                 m_config = new_config;
 
-                // --- Apply changes ---
+                // --- Apply changes based on what was detected ---
 
-                if (structural_change) {
-                    std::cout << "Structural config change detected, resetting animation and GPU resources." << std::endl;
+                if (animation_sequence_changed) {
+                    std::cout << "Animation sequence change detected, resetting animator." << std::endl;
                     m_animator->reset(m_config);
+                    // A sequence change implies the fractal is different, so reset GPU buffers too.
+                    m_renderer->resetGPUResources(m_config);
+                } else if (points_changed) {
+                    std::cout << "TotalPoints changed, resetting GPU resources without animation skip." << std::endl;
                     m_renderer->resetGPUResources(m_config);
                 } else {
-                    std::cout << "Live parameter change detected (e.g., brightness, camera). Applying without reset." << std::endl;
+                    std::cout << "Live parameter change detected (e.g., brightness, duration). Applying without reset." << std::endl;
                 }
                 
                 // Window resize is handled independently
