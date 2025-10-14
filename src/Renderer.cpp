@@ -1,5 +1,5 @@
 #include "Renderer.h"
-#include "Shader.h" // For our shader creation helper functions
+#include "Shader.h" // Now a class
 #include <iostream>
 #include <gtc/matrix_transform.hpp>
 #include <gtc/type_ptr.hpp>
@@ -17,7 +17,6 @@ bool Renderer::init(const Config& initial_config) {
     m_height = initial_config.getHeight();
 
     createShaders();
-    queryUniformLocations();
     createFramebuffers();
     createScreenQuad();
     createGPUComputeBuffers(initial_config);
@@ -25,12 +24,13 @@ bool Renderer::init(const Config& initial_config) {
     // This VAO is just a handle that tells OpenGL how to interpret the SSBO data
     // when we make the point drawing call. No actual vertex data is uploaded here.
     glGenVertexArrays(1, &m_point_render_vao);
-
-    // In a real-world app, you'd check for errors at each step and return false on failure.
+    
     return true;
 }
 
 void Renderer::cleanup() {
+    // The unique_ptr members for shaders are cleaned up automatically.
+    // No glDeleteProgram calls are needed here.
     glDeleteVertexArrays(1, &m_point_render_vao);
     glDeleteVertexArrays(1, &m_quad_vao);
     glDeleteBuffers(1, &m_quad_vbo);
@@ -40,11 +40,6 @@ void Renderer::cleanup() {
     glDeleteTextures(1, &m_fbo_texture);
     glDeleteFramebuffers(1, &m_accumulation_fbo);
     glDeleteTextures(1, &m_accumulation_texture);
-    
-    glDeleteProgram(m_point_shader_program);
-    glDeleteProgram(m_quad_shader_program);
-    glDeleteProgram(m_fade_shader_program);
-    glDeleteProgram(m_compute_shader_program);
 }
 
 void Renderer::onWindowResize(int width, int height) {
@@ -66,26 +61,23 @@ void Renderer::resetGPUResources(const Config& config) {
 
 void Renderer::render(const Config& config, const std::vector<Transform>& transforms, unsigned int width, unsigned int height) {
     // --- PART 0: GPU Compute ---
-    // First, run the compute shader to generate the point data for this frame.
     if (!transforms.empty()) {
         generateFractalOnGPU(config, transforms);
     }
 
     // --- PART 1: Render Raw Points with Motion Blur ---
-    // Bind the framebuffer that we'll draw the raw fractal points into.
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     glEnable(GL_BLEND);
 
-    // A. Fade Pass: Draw a semi-transparent black quad over the previous frame's points
-    // to create a persistence/motion-blur effect.
-    glUseProgram(m_fade_shader_program);
-    glUniform1f(m_persistence_loc, config.getPersistence());
+    // A. Fade Pass
+    m_fadeShader->use();
+    m_fadeShader->setFloat("u_persistence", config.getPersistence());
     glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA); // This blend mode darkens the texture
     glBindVertexArray(m_quad_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // B. Point Pass: Draw the newly computed points into the same framebuffer.
-    glUseProgram(m_point_shader_program);
+    // B. Point Pass
+    m_pointShader->use();
     float aspect_ratio = (float)width / (float)height;
     float zoom = config.getCameraZoom();
     float half_height = 2.0f / (zoom < 1e-6f ? 1e-6f : zoom);
@@ -95,39 +87,37 @@ void Renderer::render(const Config& config, const std::vector<Transform>& transf
         -half_height - config.getCameraY(), half_height - config.getCameraY(),
         -1.0f, 1.0f
     );
-    glUniformMatrix4fv(m_proj_loc, 1, GL_FALSE, glm::value_ptr(projection));
+    m_pointShader->setMat4("projection", projection);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Use additive blending for a bright, fiery look
     glBindVertexArray(m_point_render_vao);
     glDrawArrays(GL_POINTS, 0, (GLsizei)config.getTotalPoints());
 
     // --- PART 2: Accumulation Pass for Denoising ---
-    // Bind the second framebuffer, which accumulates frames over time to reduce noise.
     glBindFramebuffer(GL_FRAMEBUFFER, m_accumulation_fbo);
-    glUseProgram(m_quad_shader_program);
+    m_quadShader->use();
     glDisable(GL_BLEND);
-    glUniform1f(m_blend_factor_loc, config.getDenoiseFactor()); // How much of the new frame to blend in
+    m_quadShader->setFloat("u_blend_factor", config.getDenoiseFactor());
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_fbo_texture); // Input: raw points from this frame
-    glUniform1i(glGetUniformLocation(m_quad_shader_program, "screenTexture"), 0);
+    glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
+    m_quadShader->setInt("screenTexture", 0);
     glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, m_accumulation_texture); // Input: the accumulated history
-    glUniform1i(m_accumulation_sampler_loc, 1);
+    glBindTexture(GL_TEXTURE_2D, m_accumulation_texture);
+    m_quadShader->setInt("accumulationTexture", 1);
     glBindVertexArray(m_quad_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     // --- PART 3: Final Display Pass ---
-    // Bind the default framebuffer (the screen).
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClear(GL_COLOR_BUFFER_BIT);
-    glUseProgram(m_quad_shader_program);
-    glUniform1f(m_blend_factor_loc, 0.0f); // Set to 0 to signal this is the final display pass
-    glUniform2f(m_res_loc, (float)width, (float)height);
-    glUniform1f(m_brightness_loc, config.getBrightness());
-    glUniform1f(m_contrast_loc, config.getContrast());
-    glUniform1f(m_gamma_loc, config.getGamma());
+    m_quadShader->use();
+    m_quadShader->setFloat("u_blend_factor", 0.0f);
+    m_quadShader->setVec2("u_resolution", {(float)width, (float)height});
+    m_quadShader->setFloat("u_brightness", config.getBrightness());
+    m_quadShader->setFloat("u_contrast", config.getContrast());
+    m_quadShader->setFloat("u_gamma", config.getGamma());
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_accumulation_texture); // Input: the final, denoised image
-    glUniform1i(glGetUniformLocation(m_quad_shader_program, "screenTexture"), 0);
+    glBindTexture(GL_TEXTURE_2D, m_accumulation_texture);
+    m_quadShader->setInt("screenTexture", 0);
     glBindVertexArray(m_quad_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
@@ -135,28 +125,10 @@ void Renderer::render(const Config& config, const std::vector<Transform>& transf
 // --- Private Helper Implementations ---
 
 void Renderer::createShaders() {
-    m_point_shader_program = create_shader_program_from_files("shaders/vert/point.vert", "shaders/frag/point.frag");
-    m_quad_shader_program = create_shader_program_from_files("shaders/vert/quad.vert", "shaders/frag/quad.frag");
-    m_fade_shader_program = create_shader_program_from_files("shaders/vert/quad.vert", "shaders/frag/fade.frag");
-    m_compute_shader_program = create_compute_shader_program_from_file("shaders/comp/fractal.comp");
-}
-
-void Renderer::queryUniformLocations() {
-    // Graphics program uniforms
-    m_proj_loc = glGetUniformLocation(m_point_shader_program, "projection");
-    m_res_loc = glGetUniformLocation(m_quad_shader_program, "u_resolution");
-    m_brightness_loc = glGetUniformLocation(m_quad_shader_program, "u_brightness");
-    m_contrast_loc = glGetUniformLocation(m_quad_shader_program, "u_contrast");
-    m_gamma_loc = glGetUniformLocation(m_quad_shader_program, "u_gamma");
-    m_accumulation_sampler_loc = glGetUniformLocation(m_quad_shader_program, "accumulationTexture");
-    m_blend_factor_loc = glGetUniformLocation(m_quad_shader_program, "u_blend_factor");
-    m_persistence_loc = glGetUniformLocation(m_fade_shader_program, "u_persistence");
-    // Compute program uniforms
-    m_num_transforms_loc = glGetUniformLocation(m_compute_shader_program, "num_transforms");
-    m_total_points_loc = glGetUniformLocation(m_compute_shader_program, "total_points");
-    m_seed_loc = glGetUniformLocation(m_compute_shader_program, "seed");
-    m_warmup_iter_loc = glGetUniformLocation(m_compute_shader_program, "u_warmup_iterations");
-    m_main_iter_loc = glGetUniformLocation(m_compute_shader_program, "u_main_iterations");
+    m_pointShader = std::make_unique<Shader>("shaders/vert/point.vert", "shaders/frag/point.frag");
+    m_quadShader = std::make_unique<Shader>("shaders/vert/quad.vert", "shaders/frag/quad.frag");
+    m_fadeShader = std::make_unique<Shader>("shaders/vert/quad.vert", "shaders/frag/fade.frag");
+    m_computeShader = std::make_unique<Shader>("shaders/comp/fractal.comp");
 }
 
 void Renderer::createFramebuffers() {
@@ -171,7 +143,6 @@ void Renderer::createFramebuffers() {
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     glGenTextures(1, &m_fbo_texture);
     glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
-    // Use a 16-bit float texture to handle the high dynamic range of additive blending
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, m_width, m_height, 0, GL_RGBA, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -187,8 +158,7 @@ void Renderer::createFramebuffers() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_accumulation_texture, 0);
     
-    // Clear the accumulation buffer initially to black
-    glClear(GL_COLOR_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT); // Clear the accumulation buffer initially
     
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cerr << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!" << std::endl;
@@ -202,7 +172,6 @@ void Renderer::createScreenQuad() {
         -1.0f,  1.0f,  0.0f, 1.0f,
         -1.0f, -1.0f,  0.0f, 0.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
-
         -1.0f,  1.0f,  0.0f, 1.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
          1.0f,  1.0f,  1.0f, 1.0f
@@ -237,17 +206,15 @@ void Renderer::generateFractalOnGPU(const Config& config, const std::vector<Tran
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_transforms_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, transforms.size() * sizeof(Transform), transforms.data(), GL_DYNAMIC_DRAW);
     
-    glUseProgram(m_compute_shader_program);
+    m_computeShader->use();
     
-    glUniform1ui(m_num_transforms_loc, (GLuint)transforms.size());
-    glUniform1ui(m_total_points_loc, (GLuint)config.getTotalPoints());
-
-    glUniform1ui(m_warmup_iter_loc, config.getWarmupIterations());
-    glUniform1ui(m_main_iter_loc, config.getMainIterations());
+    m_computeShader->setUint("num_transforms", (GLuint)transforms.size());
+    m_computeShader->setUint("total_points", (GLuint)config.getTotalPoints());
+    m_computeShader->setUint("u_warmup_iterations", config.getWarmupIterations());
+    m_computeShader->setUint("u_main_iterations", config.getMainIterations());
     
-    // Use a random seed from the device if the config seed is 0, otherwise use the config's seed.
     unsigned int current_seed = (config.getFractalSeed() == 0) ? m_rd() : config.getFractalSeed();
-    glUniform1ui(m_seed_loc, current_seed);
+    m_computeShader->setUint("seed", current_seed);
     
     // Bind the SSBOs to the correct binding points (0 for transforms, 1 for points)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, m_transforms_ssbo);
@@ -260,3 +227,4 @@ void Renderer::generateFractalOnGPU(const Config& config, const std::vector<Tran
     // Ensure that the compute shader finishes writing to the buffer before we try to render from it
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 }
+
