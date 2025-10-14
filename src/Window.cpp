@@ -49,6 +49,9 @@ bool Window::init(unsigned int width, unsigned int height, const std::string& ti
     glfwSetFramebufferSizeCallback(m_window, framebuffer_size_callback);
     glfwMakeContextCurrent(m_window);
 
+    // TODO: Replace this with window.isVisible logic in main render loop
+    glfwSwapInterval(0); // Disable vsync blocking 
+
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cerr << "Failed to initialize GLAD" << std::endl;
         return false;
