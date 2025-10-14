@@ -17,7 +17,7 @@ struct Point {
 
 class Application {
 public:
-    Application();
+    Application(int argc, char* argv[]);
     ~Application();
     void run();
 
@@ -52,6 +52,7 @@ private:
     // Member variables
     GLFWwindow* m_window = nullptr;
     Config m_config;
+    std::string m_config_path;
 
     // Hot-reloading state
     float m_hot_reload_check_timer = 0.0f;

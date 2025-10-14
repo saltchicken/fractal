@@ -8,6 +8,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 FetchContent_Declare(
+    cxxopts
+    GIT_REPOSITORY https://github.com/jarro2783/cxxopts.git
+    GIT_TAG        v3.1.1
+)
+FetchContent_MakeAvailable(cxxopts)
+
+FetchContent_Declare(
     inih
     GIT_REPOSITORY https://github.com/benhoyt/inih.git
     GIT_TAG        r57
@@ -50,6 +57,7 @@ target_link_libraries(FractalFlame PRIVATE
     ${OPENGL_LIBRARIES}
     glfw
     inih
+    cxxopts::cxxopts
 )
 
 # Print a message upon configuration
