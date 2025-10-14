@@ -43,6 +43,7 @@ private:
     GLint m_proj_loc, m_res_loc, m_brightness_loc, m_contrast_loc, m_gamma_loc;
     GLint m_accumulation_sampler_loc, m_blend_factor_loc, m_persistence_loc;
     GLint m_num_transforms_loc, m_total_points_loc, m_seed_loc;
+    GLint m_warmup_iter_loc, m_main_iter_loc;
 
     // Internal state
     unsigned int m_width = 0;

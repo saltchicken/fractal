@@ -72,6 +72,9 @@ void Config::handle_settings(const std::string& name, const std::string& value) 
     else if (name == "Height") height = std::stoul(value);
     else if (name == "TotalPoints") total_points = std::stoll(value);
     else if (name == "InterpolationDuration") interpolation_duration = std::stof(value);
+    else if (name == "WarmupIterations") warmup_iterations = std::stoul(value);
+    else if (name == "MainIterations") main_iterations = std::stoul(value);
+    else if (name == "PointAlpha") point_alpha = std::stof(value);
     else if (name == "Seed") {
         fractal_seed = std::stoul(value);
         if (fractal_seed != 0) {
@@ -122,7 +125,7 @@ void Config::handle_transform(const std::string& section, const std::string& nam
         std::getline(ss, component, ','); color_vec.r = parse_float_or_random(component);
         std::getline(ss, component, ','); color_vec.g = parse_float_or_random(component);
         std::getline(ss, component);       color_vec.b = parse_float_or_random(component);
-        t.color = glm::vec4(color_vec, 0.15f);
+        t.color = glm::vec4(color_vec, point_alpha);
     } else if (name == "variation") {
         std::string var_str = value;
         trim(var_str);

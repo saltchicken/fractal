@@ -107,8 +107,7 @@ void Application::check_for_config_updates() {
                 bool animation_sequence_changed =
                     m_target_config.getAnimationMode() != new_config.getAnimationMode() ||
                     m_target_config.getStates().size() != new_config.getStates().size() ||
-                    m_target_config.getFractalSeed() != new_config.getFractalSeed() ||
-                    m_target_config.getInterpolationDuration() != new_config.getInterpolationDuration();
+                    m_target_config.getFractalSeed() != new_config.getFractalSeed();
                 
                 unsigned int old_width = m_target_config.getWidth();
                 if (animation_sequence_changed) {
@@ -127,6 +126,7 @@ void Application::check_for_config_updates() {
                     std::cout << "Live parameter change detected. Interpolating..." << std::endl;
                     m_source_config = m_config; // The current interpolated state is the source
                     m_target_config = new_config; // The new file is the target
+                    m_config.setInterpolationDuration(new_config.getInterpolationDuration()); 
                     m_param_interpolation_alpha = 0.0f; // Start the interpolation
                 }
                 

@@ -155,6 +155,8 @@ void Renderer::queryUniformLocations() {
     m_num_transforms_loc = glGetUniformLocation(m_compute_shader_program, "num_transforms");
     m_total_points_loc = glGetUniformLocation(m_compute_shader_program, "total_points");
     m_seed_loc = glGetUniformLocation(m_compute_shader_program, "seed");
+    m_warmup_iter_loc = glGetUniformLocation(m_compute_shader_program, "u_warmup_iterations");
+    m_main_iter_loc = glGetUniformLocation(m_compute_shader_program, "u_main_iterations");
 }
 
 void Renderer::createFramebuffers() {
@@ -239,6 +241,9 @@ void Renderer::generateFractalOnGPU(const Config& config, const std::vector<Tran
     
     glUniform1ui(m_num_transforms_loc, (GLuint)transforms.size());
     glUniform1ui(m_total_points_loc, (GLuint)config.getTotalPoints());
+
+    glUniform1ui(m_warmup_iter_loc, config.getWarmupIterations());
+    glUniform1ui(m_main_iter_loc, config.getMainIterations());
     
     // Use a random seed from the device if the config seed is 0, otherwise use the config's seed.
     unsigned int current_seed = (config.getFractalSeed() == 0) ? m_rd() : config.getFractalSeed();

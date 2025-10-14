@@ -1,20 +1,34 @@
 // shaders/comp/fractal.comp
-
 #version 430 core
 layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-// Data Structures
-struct Point { vec4 position; vec4 color; };
-struct Transform { vec4 params1; vec4 params2; vec4 color; uvec4 variation; };
+// --- Data Structures ---
+struct Point {
+    vec4 position;
+    vec4 color;
+};
 
-// Buffers
-layout(std430, binding = 0) readonly buffer TransformBlock { Transform transforms[]; };
-layout(std430, binding = 1) buffer PointBlock { Point points[]; };
+struct Transform {
+    vec4 params1;
+    vec4 params2;
+    vec4 color;
+    uvec4 variation;
+};
 
-// Uniforms
+// --- Buffers ---
+layout(std430, binding = 0) readonly buffer TransformBlock {
+    Transform transforms[];
+};
+layout(std430, binding = 1) buffer PointBlock {
+    Point points[];
+};
+
+// --- Uniforms ---
 uniform uint num_transforms;
 uniform uint total_points;
 uniform uint seed;
+uniform uint u_warmup_iterations;
+uniform uint u_main_iterations;
 
 // --- Helper Functions ---
 uint hash(uint x) {
@@ -33,18 +47,20 @@ float random(inout uint state) {
 
 vec2 apply_variations(vec2 p, uint var_enum) {
     switch (var_enum) {
-        case 0: return p; // LINEAR
-        case 1: return sin(p); // SINUSOIDAL
+        case 0: // LINEAR
+            return p;
+        case 1: // SINUSOIDAL
+            return sin(p);
         case 2: // SPHERICAL
             float r2_sph = dot(p, p);
             if (r2_sph > 1e-6) return p / r2_sph;
             return p;
         case 3: // SWIRL
             float r2_sw = dot(p, p);
-            return vec2(p.x*sin(r2_sw)-p.y*cos(r2_sw), p.x*cos(r2_sw)+p.y*sin(r2_sw));
+            return vec2(p.x * sin(r2_sw) - p.y * cos(r2_sw), p.x * cos(r2_sw) + p.y * sin(r2_sw));
         case 4: // HORSESHOE
             float r_hs = length(p);
-            if (r_hs > 1e-6) return vec2((p.x-p.y)*(p.x+p.y), 2.0*p.x*p.y)/r_hs;
+            if (r_hs > 1e-6) return vec2((p.x - p.y) * (p.x + p.y), 2.0 * p.x * p.y) / r_hs;
             return p;
     }
     return p;
@@ -58,23 +74,24 @@ void main() {
     uint rand_state = hash(index + seed);
     vec2 current_point = vec2(random(rand_state) * 2.0 - 1.0, random(rand_state) * 2.0 - 1.0);
     
-    // Warm-up iterations
-    for (int i = 0; i < 20; ++i) {
+    // Warm-up iterations to let the point settle onto the attractor
+    for (int i = 0; i < u_warmup_iterations; ++i) {
         uint t_idx = uint(random(rand_state) * num_transforms);
         Transform t = transforms[t_idx];
-        current_point = vec2(t.params1.x*current_point.x + t.params1.y*current_point.y + t.params1.z, t.params1.w*current_point.x + t.params2.x*current_point.y + t.params2.y);
+        current_point = vec2(t.params1.x * current_point.x + t.params1.y * current_point.y + t.params1.z, t.params1.w * current_point.x + t.params2.x * current_point.y + t.params2.y);
         current_point = apply_variations(current_point, t.variation.x);
     }
     
     vec3 accumulated_color = vec3(0.0);
+    float final_alpha = 0.0; // Variable to store the last used alpha
 
     // Main iterations to find the final point position and color
-    for (int i = 0; i < 150; i++) {
+    for (int i = 0; i < u_main_iterations; i++) {
         uint t_idx = uint(random(rand_state) * num_transforms);
         Transform t = transforms[t_idx];
         
         // Apply affine transform and variation
-        current_point = vec2(t.params1.x*current_point.x + t.params1.y*current_point.y + t.params1.z, t.params1.w*current_point.x + t.params2.x*current_point.y + t.params2.y);
+        current_point = vec2(t.params1.x * current_point.x + t.params1.y * current_point.y + t.params1.z, t.params1.w * current_point.x + t.params2.x * current_point.y + t.params2.y);
         current_point = apply_variations(current_point, t.variation.x);
 
         // Blend the color at each step
@@ -83,12 +100,9 @@ void main() {
         } else {
             accumulated_color = (accumulated_color + t.color.rgb) * 0.5; // Average with subsequent colors
         }
+        final_alpha = t.color.a; // Update the alpha in every iteration
     }
 
     points[index].position = vec4(current_point, 0.0, 1.0);
-    
-    // Use the final accumulated color. The alpha value is used for additive blending
-    // and should be consistent, so we can just grab it from the first transform.
-    float alpha = num_transforms > 0 ? transforms[0].color.a : 0.15;
-    points[index].color = vec4(accumulated_color, alpha);
+    points[index].color = vec4(accumulated_color, final_alpha);
 }

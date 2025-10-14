@@ -43,6 +43,9 @@ public:
     float getInterpolationDuration() const { return interpolation_duration; }
     unsigned int getFractalSeed() const { return fractal_seed; }
     AnimationMode getAnimationMode() const { return animation_mode; }
+    unsigned int getWarmupIterations() const { return warmup_iterations; }
+    unsigned int getMainIterations() const { return main_iterations; }
+    float getPointAlpha() const { return point_alpha; }
     const std::vector<std::vector<Transform>>& getStates() const { return states; }
 
     void setCameraX(float val) { camera_x = val; }
@@ -53,6 +56,7 @@ public:
     void setGamma(float val) { post_gamma = val; }
     void setPersistence(float val) { post_persistence = val; }
     void setDenoiseFactor(float val) { post_denoise_factor = val; }
+    void setInterpolationDuration(float val) { interpolation_duration = val; }
 
 
 private:
@@ -71,6 +75,9 @@ private:
     float interpolation_duration = 2.0f;
     unsigned int fractal_seed = 0;
     AnimationMode animation_mode = PING_PONG;
+    unsigned int warmup_iterations = 20;
+    unsigned int main_iterations = 150;
+    float point_alpha = 0.15f;
 
     // Parsed fractal states
     std::vector<std::vector<Transform>> states;
