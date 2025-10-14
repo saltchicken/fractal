@@ -17,8 +17,8 @@ Application::Application(int argc, char* argv[]) {
         std::cout << options.help() << std::endl;
         exit(0);
     }
-    m_config_path = result["config"].as<std::string>();
 
+    m_config_path = result["config"].as<std::string>();
     m_window = std::make_unique<Window>();
     m_renderer = std::make_unique<Renderer>();
     m_animator = std::make_unique<Animator>();
@@ -46,13 +46,11 @@ void Application::run() {
     if (!m_renderer->init(m_config)) return;
     
     m_animator->reset(m_config);
-
     m_window->setResizeCallback([this](int width, int height) {
         this->handleWindowResize(width, height);
     });
 
     m_last_frame_time = glfwGetTime();
-
     while (!m_window->shouldClose()) {
         double current_time = glfwGetTime();
         float delta_time = static_cast<float>(current_time - m_last_frame_time);
@@ -90,16 +88,36 @@ void Application::check_for_config_updates() {
             
             Config new_config;
             if (new_config.load(m_config_path)) {
+                // Heuristic: A "structural change" is anything that alters the fractal's
+                // points or the animation sequence. Post-processing and camera changes are not structural.
+                bool structural_change =
+                    m_config.getTotalPoints() != new_config.getTotalPoints() ||
+                    m_config.getInterpolationDuration() != new_config.getInterpolationDuration() ||
+                    m_config.getAnimationMode() != new_config.getAnimationMode() ||
+                    m_config.getStates().size() != new_config.getStates().size() ||
+                    m_config.getFractalSeed() != new_config.getFractalSeed();
+                
+                unsigned int old_width = m_config.getWidth();
+                unsigned int old_height = m_config.getHeight();
+
+                // Atomically update the config
                 m_config = new_config;
-                
-                m_animator->reset(m_config);
-                
-                if (m_width != m_config.getWidth() || m_height != m_config.getHeight()) {
-                    glfwSetWindowSize(m_window->getNativeWindow(), m_config.getWidth(), m_config.getHeight());
+
+                // --- Apply changes ---
+
+                if (structural_change) {
+                    std::cout << "Structural config change detected, resetting animation and GPU resources." << std::endl;
+                    m_animator->reset(m_config);
+                    m_renderer->resetGPUResources(m_config);
+                } else {
+                    std::cout << "Live parameter change detected (e.g., brightness, camera). Applying without reset." << std::endl;
                 }
                 
-                m_renderer->resetGPUResources(m_config);
-                
+                // Window resize is handled independently
+                if (old_width != m_config.getWidth() || old_height != m_config.getHeight()) {
+                    glfwSetWindowSize(m_window->getNativeWindow(), m_config.getWidth(), m_config.getHeight());
+                }
+
                 std::cout << "Successfully reloaded " << m_config_path << "!" << std::endl;
             } else {
                 std::cerr << "Failed to reload " << m_config_path << ", keeping old settings." << std::endl;
