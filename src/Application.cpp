@@ -106,7 +106,7 @@ void Application::check_for_config_updates() {
                 bool points_changed = m_target_config.getTotalPoints() != new_config.getTotalPoints();
                 bool animation_sequence_changed =
                     m_target_config.getAnimationMode() != new_config.getAnimationMode() ||
-                    m_target_config.getStates().size() != new_config.getStates().size() ||
+                    m_target_config.getStates() != new_config.getStates() ||
                     m_target_config.getFractalSeed() != new_config.getFractalSeed();
                 
                 unsigned int old_width = m_target_config.getWidth();
