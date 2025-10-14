@@ -186,6 +186,11 @@ void Application::check_for_config_updates() {
                 }
                 // Re-initialize GPU buffers in case TotalPoints changed
                 setup_gpu_compute();
+
+                // TODO: Is this necessary?
+                glBindFramebuffer(GL_FRAMEBUFFER, m_accumulation_fbo);
+                glClear(GL_COLOR_BUFFER_BIT);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
                 std::cout << "Successfully reloaded " << m_config_path << "!" << std::endl;
             } else {
                 std::cerr << "Failed to reload " << m_config_path << ", keeping old settings." << std::endl;
