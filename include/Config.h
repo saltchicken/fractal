@@ -42,6 +42,16 @@ public:
     AnimationMode getAnimationMode() const { return animation_mode; }
     const std::vector<std::vector<Transform>>& getStates() const { return states; }
 
+    void setCameraX(float val) { camera_x = val; }
+    void setCameraY(float val) { camera_y = val; }
+    void setCameraZoom(float val) { camera_zoom = val; }
+    void setBrightness(float val) { post_brightness = val; }
+    void setContrast(float val) { post_contrast = val; }
+    void setGamma(float val) { post_gamma = val; }
+    void setPersistence(float val) { post_persistence = val; }
+    void setDenoiseFactor(float val) { post_denoise_factor = val; }
+
+
 private:
     // Settings
     unsigned int width = 1280;
