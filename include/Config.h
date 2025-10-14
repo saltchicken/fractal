@@ -8,6 +8,9 @@
 enum Variation { LINEAR, SINUSOIDAL, SPHERICAL, SWIRL, HORSESHOE };
 
 struct Transform {
+    // Maps to affine transform:
+    // x' = params1.x * x + params1.y * y + params1.z  (a, b, c)
+    // y' = params1.w * x + params2.x * y + params2.y  (d, e, f)
     glm::vec4 params1{};
     glm::vec4 params2{};
     glm::vec4 color{};
