@@ -60,6 +60,11 @@ public:
     unsigned int getTargetFPS() const { return target_fps; }
     const std::vector<std::vector<Transform>>& getStates() const { return states; }
 
+    const std::string& getRandomColorMode() const { return random_color_mode; }
+    const glm::vec2& getRandomColorRangeR() const { return random_color_range_r; }
+    const glm::vec2& getRandomColorRangeG() const { return random_color_range_g; }
+    const glm::vec2& getRandomColorRangeB() const { return random_color_range_b; }
+
     void setCameraX(float val) { camera_x = val; }
     void setCameraY(float val) { camera_y = val; }
     void setCameraZoom(float val) { camera_zoom = val; }
@@ -98,6 +103,11 @@ private:
     // Parsed fractal states
     std::vector<std::vector<Transform>> states;
 
+    std::string random_color_mode = "template"; // "template" or "random"
+    glm::vec2 random_color_range_r{0.0f, 1.0f};
+    glm::vec2 random_color_range_g{0.0f, 1.0f};
+    glm::vec2 random_color_range_b{0.0f, 1.0f};
+
     // Random number generator for parsing random() values
     std::mt19937 rng;
 
@@ -106,6 +116,7 @@ private:
     void handle_settings(const std::string& name, const std::string& value);
     void handle_camera(const std::string& name, const std::string& value);
     void handle_post_processing(const std::string& name, const std::string& value);
+    void handle_randomization(const std::string& name, const std::string& value);
     void handle_transform(const std::string& section, const std::string& name, const std::string& value);
 
     // The static callback for ini_parse

@@ -150,24 +150,6 @@ std::vector<Transform> Animator::generate_random_state(const Config& config) {
         return dist(m_rd_generator);
     };
 
-    // --- Helper lambda to create a single randomized transform ---
-    auto create_random_transform = [&](const Config& cfg) -> Transform {
-        Transform t;
-        // Set random affine parameters
-        t.params1 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f));
-        t.params2 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), 0.f, 0.f);
-
-        // Generate a random color
-        // glm::vec3 color_vec(rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f));
-
-        // Generate a vibrant random color using HSV color space
-        glm::vec3 hsv = { glm::linearRand(0.0f, 360.0f), 0.8f, 0.95f };
-        glm::vec3 color_vec = glm::rgbColor(hsv);
-        t.color = glm::vec4(color_vec, cfg.getPointAlpha());
-
-        return t;
-    };
-
     const auto& config_states = config.getStates();
     std::vector<Transform> new_state;
     std::string generation_method;
@@ -179,33 +161,65 @@ std::vector<Transform> Animator::generate_random_state(const Config& config) {
         new_state.reserve(template_state.size());
 
         for (const auto& t_template : template_state) {
-            // 1. Create a fully random transform using the helper
-            Transform t = create_random_transform(config);
-            // 2. The only difference is here: we use the variation from the template
+            Transform t;
+            // Set random affine parameters
+            t.params1 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f));
+            t.params2 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), 0.f, 0.f);
+            
+            // Set variation from template
             t.variation = t_template.variation;
+
+            // Set color based on config mode
+            if (config.getRandomColorMode() == "template") {
+                t.color = t_template.color;
+            } else { // "random" mode
+                const auto& range_r = config.getRandomColorRangeR();
+                const auto& range_g = config.getRandomColorRangeG();
+                const auto& range_b = config.getRandomColorRangeB();
+                glm::vec3 color_vec(rand_float(range_r.x, range_r.y), 
+                                    rand_float(range_g.x, range_g.y), 
+                                    rand_float(range_b.x, range_b.y));
+                t.color = glm::vec4(color_vec, 0.0f); // Alpha is set next
+            }
+            // Always update alpha from the main config setting
+            t.color.a = config.getPointAlpha();
+            
             new_state.push_back(t);
         }
-    } else { // --- Fallback Logic ---
-        generation_method = "Generated new fully random state";
+    } else { // --- Fallback Logic (no template available) ---
+        generation_method = "Generated new fully random state (no template found)";
         std::uniform_int_distribution<int> num_dist(2, 4);
         int num_transforms = num_dist(m_rd_generator);
         new_state.reserve(num_transforms);
-
+        
         auto rand_variation = [this]() {
             std::uniform_int_distribution<int> dist(0, HORSESHOE);
             return static_cast<Variation>(dist(m_rd_generator));
         };
+
         for (int i = 0; i < num_transforms; ++i) {
-            // 1. Create a fully random transform using the helper
-            Transform t = create_random_transform(config);
-            // 2. The only difference is here: we generate a random variation
+            Transform t;
+            // Set random affine parameters
+            t.params1 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f));
+            t.params2 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), 0.f, 0.f);
+
+            // Generate a random variation
             t.variation.x = rand_variation();
+
+            // Always generate a random color in fallback mode using the specified ranges
+            const auto& range_r = config.getRandomColorRangeR();
+            const auto& range_g = config.getRandomColorRangeG();
+            const auto& range_b = config.getRandomColorRangeB();
+            glm::vec3 color_vec(rand_float(range_r.x, range_r.y), 
+                                rand_float(range_g.x, range_g.y), 
+                                rand_float(range_b.x, range_b.y));
+            t.color = glm::vec4(color_vec, config.getPointAlpha());
+
             new_state.push_back(t);
         }
     }
 
     // Use the helper to print details for the new random state
     print_state_details(generation_method, new_state);
-
     return new_state;
 }

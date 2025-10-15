@@ -20,6 +20,23 @@ namespace {
             return !std::isspace(ch);
         }).base(), s.end());
     }
+    
+    // Helper function to parse a vec2 from a string like "min, max"
+    glm::vec2 parse_vec2(const std::string& value_str) {
+        glm::vec2 result(0.0f, 1.0f); // Default range
+        std::string s = value_str;
+        trim(s);
+        size_t comma_pos = s.find(',');
+        if (comma_pos != std::string::npos) {
+            try {
+                result.x = std::stof(s.substr(0, comma_pos));
+                result.y = std::stof(s.substr(comma_pos + 1));
+            } catch (const std::exception&) {
+                std::cerr << "Warning: Could not parse vec2 arguments: " << s << ". Using default range [0, 1]." << std::endl;
+            }
+        }
+        return result;
+    }
 }
 
 // Map to convert string variations from the config file to the Variation enum
@@ -108,6 +125,25 @@ void Config::handle_post_processing(const std::string& name, const std::string& 
     else if (name == "DenoiseFactor") post_denoise_factor = std::stof(value);
 }
 
+void Config::handle_randomization(const std::string& name, const std::string& value) {
+    if (name == "ColorMode") {
+        std::string mode_str = value;
+        std::transform(mode_str.begin(), mode_str.end(), mode_str.begin(), ::tolower);
+        if (mode_str == "template" || mode_str == "random") {
+            random_color_mode = mode_str;
+        } else {
+            std::cerr << "Warning: Invalid ColorMode '" << value << "'. Using 'template'." << std::endl;
+            random_color_mode = "template";
+        }
+    } else if (name == "RandomColorR") {
+        random_color_range_r = parse_vec2(value);
+    } else if (name == "RandomColorG") {
+        random_color_range_g = parse_vec2(value);
+    } else if (name == "RandomColorB") {
+        random_color_range_b = parse_vec2(value);
+    }
+}
+
 void Config::handle_transform(const std::string& section, const std::string& name, const std::string& value) {
     int state_num, transform_num;
     if (sscanf(section.c_str(), "State.%d.Transform.%d", &state_num, &transform_num) != 2) return;
@@ -152,6 +188,8 @@ int Config::handler(void* user, const char* section, const char* name, const cha
         pconfig->handle_camera(name, value);
     } else if (strcmp(section, "PostProcessing") == 0) {
         pconfig->handle_post_processing(name, value);
+    } else if (strcmp(section, "Randomization") == 0) {
+        pconfig->handle_randomization(name, value);
     } else if (strncmp(section, "State.", 6) == 0) {
         pconfig->handle_transform(section, name, value);
     }
