@@ -5,8 +5,6 @@
 #include <map>
 #include <string>
 #include <gtc/random.hpp>
-#define GLM_ENABLE_EXPERIMENTAL
-#include <gtx/color_space.hpp>
 
 namespace {
     // Helper to convert Variation enum to string for logging
