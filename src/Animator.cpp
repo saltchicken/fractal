@@ -164,7 +164,14 @@ std::vector<Transform> Animator::generate_random_state(const Config& config) {
             Transform t;
             t.params1 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f));
             t.params2 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), 0.f, 0.f);
-            t.color = glm::vec4(rand_float(0.f, 1.f), rand_float(0.f, 1.f), rand_float(0.f, 1.f), 0.15f);
+            // Generate a random color
+            // glm::vec3 color_vec(rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f));
+
+            // Generate a random color with experimental color space
+            glm::vec3 hsv = { glm::linearRand(0.0f, 360.0f), 0.8f, 0.95f };
+            glm::vec3 color_vec = glm::rgbColor(hsv);
+
+            t.color = glm::vec4(color_vec, 0.15f); 
             t.variation = t_template.variation;
             new_state.push_back(t);
         }
