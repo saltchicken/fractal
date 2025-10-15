@@ -150,6 +150,24 @@ std::vector<Transform> Animator::generate_random_state(const Config& config) {
         return dist(m_rd_generator);
     };
 
+    // --- Helper lambda to create a single randomized transform ---
+    auto create_random_transform = [&](const Config& cfg) -> Transform {
+        Transform t;
+        // Set random affine parameters
+        t.params1 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f));
+        t.params2 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), 0.f, 0.f);
+
+        // Generate a random color
+        // glm::vec3 color_vec(rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f));
+
+        // Generate a vibrant random color using HSV color space
+        glm::vec3 hsv = { glm::linearRand(0.0f, 360.0f), 0.8f, 0.95f };
+        glm::vec3 color_vec = glm::rgbColor(hsv);
+        t.color = glm::vec4(color_vec, cfg.getPointAlpha());
+
+        return t;
+    };
+
     const auto& config_states = config.getStates();
     std::vector<Transform> new_state;
     std::string generation_method;
@@ -161,17 +179,9 @@ std::vector<Transform> Animator::generate_random_state(const Config& config) {
         new_state.reserve(template_state.size());
 
         for (const auto& t_template : template_state) {
-            Transform t;
-            t.params1 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f));
-            t.params2 = glm::vec4(rand_float(-1.2f, 1.2f), rand_float(-1.2f, 1.2f), 0.f, 0.f);
-            // Generate a random color
-            // glm::vec3 color_vec(rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f));
-
-            // Generate a random color with experimental color space
-            glm::vec3 hsv = { glm::linearRand(0.0f, 360.0f), 0.8f, 0.95f };
-            glm::vec3 color_vec = glm::rgbColor(hsv);
-
-            t.color = glm::vec4(color_vec, config.getPointAlpha()); 
+            // 1. Create a fully random transform using the helper
+            Transform t = create_random_transform(config);
+            // 2. The only difference is here: we use the variation from the template
             t.variation = t_template.variation;
             new_state.push_back(t);
         }
@@ -186,22 +196,9 @@ std::vector<Transform> Animator::generate_random_state(const Config& config) {
             return static_cast<Variation>(dist(m_rd_generator));
         };
         for (int i = 0; i < num_transforms; ++i) {
-            Transform t;
-            t.params1.x = rand_float(-1.2f, 1.2f);
-            t.params1.y = rand_float(-1.2f, 1.2f);
-            t.params1.z = rand_float(-1.2f, 1.2f);
-            t.params1.w = rand_float(-1.2f, 1.2f);
-            t.params2.x = rand_float(-1.2f, 1.2f);
-            t.params2.y = rand_float(-1.2f, 1.2f);
-
-            // Generate a random color
-            // glm::vec3 color_vec(rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f));
-
-            // Generate a random color with experimental color space
-            glm::vec3 hsv = { glm::linearRand(0.0f, 360.0f), 0.8f, 0.95f };
-            glm::vec3 color_vec = glm::rgbColor(hsv);
-
-            t.color = glm::vec4(color_vec, config.getPointAlpha()); 
+            // 1. Create a fully random transform using the helper
+            Transform t = create_random_transform(config);
+            // 2. The only difference is here: we generate a random variation
             t.variation.x = rand_variation();
             new_state.push_back(t);
         }
