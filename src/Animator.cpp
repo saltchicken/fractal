@@ -4,6 +4,9 @@
 #include <cmath>
 #include <map>
 #include <string>
+#include <gtc/random.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <gtx/color_space.hpp>
 
 namespace {
     // Helper to convert Variation enum to string for logging
@@ -183,8 +186,15 @@ std::vector<Transform> Animator::generate_random_state(const Config& config) {
             t.params1.w = rand_float(-1.2f, 1.2f);
             t.params2.x = rand_float(-1.2f, 1.2f);
             t.params2.y = rand_float(-1.2f, 1.2f);
-            glm::vec3 color_vec(rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f));
-            t.color = glm::vec4(color_vec, 0.15f);
+
+            // Generate a random color
+            // glm::vec3 color_vec(rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f), rand_float(0.0f, 1.0f));
+
+            // Generate a random color with experimental color space
+            glm::vec3 hsv = { glm::linearRand(0.0f, 360.0f), 0.8f, 0.95f };
+            glm::vec3 color_vec = glm::rgbColor(hsv);
+
+            t.color = glm::vec4(color_vec, 0.15f); 
             t.variation.x = rand_variation();
             new_state.push_back(t);
         }
