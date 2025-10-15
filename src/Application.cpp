@@ -74,7 +74,7 @@ void Application::run() {
             // std::string title = "GPU Fractal Flame - FPS: " + std::to_string(m_frame_counter);
             // glfwSetWindowTitle(m_window->getNativeWindow(), title.c_str());
             m_frame_counter = 0;
-            m_fps_timer -= 1.0; // TODO: Should I set this to 0.0f?
+            m_fps_timer = fmod(m_fps_timer, 1.0);
         }
         m_window->pollEvents();
         m_window->processInput();
