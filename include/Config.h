@@ -69,6 +69,9 @@ public:
     void setPersistence(float val) { post_persistence = val; }
     void setDenoiseFactor(float val) { post_denoise_factor = val; }
     void setInterpolationDuration(float val) { interpolation_duration = val; }
+    void setWarmupIterations(unsigned int val) { warmup_iterations = val; }
+    void setMainIterations(unsigned int val) { main_iterations = val; }
+    void setTargetFPS(unsigned int val) { target_fps = val; }
 
 
 private:

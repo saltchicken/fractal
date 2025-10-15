@@ -65,6 +65,14 @@ void Application::run() {
     
     m_last_frame_time = glfwGetTime();
     while (!m_window->shouldClose()) {
+        // TODO: Move this so its only called when a change is detected
+        unsigned int target_fps = m_config.getTargetFPS();
+        if (target_fps > 0) {
+            target_frame_time = 1.0 / static_cast<double>(target_fps);
+        } else {
+            target_frame_time = 0.0;
+        }
+
         double current_time = glfwGetTime();
         float delta_time = static_cast<float>(current_time - m_last_frame_time);
         m_last_frame_time = current_time;
@@ -155,6 +163,9 @@ void Application::check_for_config_updates() {
                     m_source_config = m_config; // The current interpolated state is the source
                     m_target_config = new_config; // The new file is the target
                     m_config.setInterpolationDuration(new_config.getInterpolationDuration()); 
+                    m_config.setWarmupIterations(new_config.getWarmupIterations());
+                    m_config.setMainIterations(new_config.getMainIterations());
+                    m_config.setTargetFPS(new_config.getTargetFPS());
                     m_param_interpolation_alpha = 0.0f; // Start the interpolation
                 }
                 
