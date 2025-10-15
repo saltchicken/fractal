@@ -19,7 +19,7 @@ public:
     ~Renderer();
 
     bool init(const Config& initial_config);
-    void render(const Config& config, const std::vector<Transform>& transforms, unsigned int width, unsigned int height, bool is_transparent);
+    void render(const Config& config, const std::vector<Transform>& transforms, unsigned int width, unsigned int height, bool is_transparent, bool is_paused);
     void onWindowResize(int width, int height);
     void resetGPUResources(const Config& config);
 

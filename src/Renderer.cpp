@@ -59,54 +59,54 @@ void Renderer::resetGPUResources(const Config& config) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void Renderer::render(const Config& config, const std::vector<Transform>& transforms, unsigned int width, unsigned int height, bool is_transparent) {
-    // --- PART 0: GPU Compute ---
-    if (!transforms.empty()) {
-        generateFractalOnGPU(config, transforms);
+void Renderer::render(const Config& config, const std::vector<Transform>& transforms, unsigned int width, unsigned int height, bool is_transparent, bool is_paused) {
+    if (!is_paused) {
+        // --- PART 0: GPU Compute ---
+        if (!transforms.empty()) {
+            generateFractalOnGPU(config, transforms);
+        }
+
+        // --- PART 1: Render Raw Points with Motion Blur ---
+        glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+        glEnable(GL_BLEND);
+        // A. Fade Pass
+        m_fadeShader->use();
+        m_fadeShader->setFloat("u_persistence", config.getPersistence());
+        glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA); // This blend mode darkens the texture
+        glBindVertexArray(m_quad_vao);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        // B. Point Pass
+        m_pointShader->use();
+        float aspect_ratio = (float)width / (float)height;
+        float zoom = config.getCameraZoom();
+        float half_height = 2.0f / (zoom < 1e-6f ? 1e-6f : zoom);
+        float half_width = half_height * aspect_ratio;
+        glm::mat4 projection = glm::ortho(
+            -half_width - config.getCameraX(), half_width - config.getCameraX(),
+            -half_height - config.getCameraY(), half_height - config.getCameraY(),
+            -1.0f, 1.0f
+        );
+        m_pointShader->setMat4("projection", projection);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Use additive blending for a bright, fiery look
+        glBindVertexArray(m_point_render_vao);
+        glDrawArrays(GL_POINTS, 0, (GLsizei)config.getTotalPoints());
+
+        // --- PART 2: Accumulation Pass for Denoising ---
+        glBindFramebuffer(GL_FRAMEBUFFER, m_accumulation_fbo);
+        m_quadShader->use();
+        glDisable(GL_BLEND);
+        m_quadShader->setFloat("u_blend_factor", config.getDenoiseFactor());
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
+        m_quadShader->setInt("screenTexture", 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_accumulation_texture);
+        m_quadShader->setInt("accumulationTexture", 1);
+        glBindVertexArray(m_quad_vao);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 
-    // --- PART 1: Render Raw Points with Motion Blur ---
-    glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-    glEnable(GL_BLEND);
-
-    // A. Fade Pass
-    m_fadeShader->use();
-    m_fadeShader->setFloat("u_persistence", config.getPersistence());
-    glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA); // This blend mode darkens the texture
-    glBindVertexArray(m_quad_vao);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // B. Point Pass
-    m_pointShader->use();
-    float aspect_ratio = (float)width / (float)height;
-    float zoom = config.getCameraZoom();
-    float half_height = 2.0f / (zoom < 1e-6f ? 1e-6f : zoom);
-    float half_width = half_height * aspect_ratio;
-    glm::mat4 projection = glm::ortho(
-        -half_width - config.getCameraX(), half_width - config.getCameraX(),
-        -half_height - config.getCameraY(), half_height - config.getCameraY(),
-        -1.0f, 1.0f
-    );
-    m_pointShader->setMat4("projection", projection);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Use additive blending for a bright, fiery look
-    glBindVertexArray(m_point_render_vao);
-    glDrawArrays(GL_POINTS, 0, (GLsizei)config.getTotalPoints());
-
-    // --- PART 2: Accumulation Pass for Denoising ---
-    glBindFramebuffer(GL_FRAMEBUFFER, m_accumulation_fbo);
-    m_quadShader->use();
-    glDisable(GL_BLEND);
-    m_quadShader->setFloat("u_blend_factor", config.getDenoiseFactor());
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_fbo_texture);
-    m_quadShader->setInt("screenTexture", 0);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, m_accumulation_texture);
-    m_quadShader->setInt("accumulationTexture", 1);
-    glBindVertexArray(m_quad_vao);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // --- PART 3: Final Display Pass ---
+    // --- PART 3: Final Display Pass (This runs every frame) ---
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     if (is_transparent) {
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
