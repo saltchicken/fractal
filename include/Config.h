@@ -19,7 +19,6 @@ struct Transform {
     glm::vec4 color{};
     glm::uvec4 variation{};
 
-    // ADD THIS OPERATOR
     bool operator==(const Transform& other) const {
         return params1 == other.params1 &&
                params2 == other.params2 &&
