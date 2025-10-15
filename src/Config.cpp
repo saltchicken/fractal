@@ -44,7 +44,9 @@ const std::map<std::string, Variation> variation_map = {
     {"LINEAR", LINEAR}, {"SINUSOIDAL", SINUSOIDAL}, {"SPHERICAL", SPHERICAL},
     {"SWIRL", SWIRL}, {"HORSESHOE", HORSESHOE}, {"POLAR", POLAR},
     {"HEART", HEART}, {"DISK", DISK}, {"SPIRAL", SPIRAL},
-    {"HYPERBOLIC", HYPERBOLIC}
+    {"HYPERBOLIC", HYPERBOLIC},
+    {"JULIA", JULIA}, {"BENT", BENT}, {"FISHEYE", FISHEYE},
+    {"POPCORN", POPCORN}, {"DIAMOND", DIAMOND}
 };
 
 Config::Config() : rng(std::random_device{}()) {}

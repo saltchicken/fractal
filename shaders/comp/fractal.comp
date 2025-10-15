@@ -47,7 +47,7 @@ float random(inout uint state) {
     return float(state) / float(0xFFFFFFFFu);
 }
 
-vec2 apply_variations(vec2 p, uint var_enum) {
+vec2 apply_variations(vec2 p, uint var_enum, inout uint state) {
     switch (var_enum) {
         case 0: // LINEAR
             return p;
@@ -84,6 +84,26 @@ vec2 apply_variations(vec2 p, uint var_enum) {
             float theta_hy = atan(p.y, p.x);
             if (r_hy > 1e-6) return vec2(sin(theta_hy) / r_hy, r_hy * cos(theta_hy));
             return p;
+        case 10: // JULIA
+            float r_j = sqrt(length(p));
+            float theta_j = 0.5 * atan(p.y, p.x) + (random(state) > 0.5 ? PI : 0.0);
+            return r_j * vec2(cos(theta_j), sin(theta_j));
+
+        case 11: // BENT
+            return vec2(p.x < 0.0 ? 2.0 * p.x : p.x, p.y < 0.0 ? 0.5 * p.y : p.y);
+
+        case 12: // FISHEYE
+            float r_fe = 2.0 / (length(p) + 1.0);
+            return r_fe * p.yx;
+
+        case 13: // POPCORN
+            return p + vec2(p.x - 0.05 * sin(p.y + tan(3.0 * p.y)),
+                            p.y - 0.05 * sin(p.x + tan(3.0 * p.x)));
+
+        case 14: // DIAMOND
+            float r_di = length(p);
+            float theta_di = atan(p.y, p.x);
+            return vec2(sin(theta_di) * cos(r_di), cos(theta_di) * sin(r_di));
     }
     return p;
 }
@@ -103,8 +123,8 @@ void main() {
         current_point = vec2(t.params1.x * current_point.x + t.params1.y * current_point.y + t.params1.z, t.params1.w * current_point.x + t.params2.x * current_point.y + t.params2.y);
 
         // Calculate the result of BOTH variations
-        vec2 point_from = apply_variations(current_point, t.variation.x);
-        vec2 point_to   = apply_variations(current_point, t.variation.y);
+        vec2 point_from = apply_variations(current_point, t.variation.x, rand_state);
+        vec2 point_to   = apply_variations(current_point, t.variation.y, rand_state);
 
         // Smoothly blend the results using the alpha we passed in
         current_point = mix(point_from, point_to, t.params2.z);
@@ -122,8 +142,8 @@ void main() {
         current_point = vec2(t.params1.x * current_point.x + t.params1.y * current_point.y + t.params1.z, t.params1.w * current_point.x + t.params2.x * current_point.y + t.params2.y);
 
         // Calculate the result of BOTH variations
-        vec2 point_from = apply_variations(current_point, t.variation.x);
-        vec2 point_to   = apply_variations(current_point, t.variation.y);
+        vec2 point_from = apply_variations(current_point, t.variation.x, rand_state);
+        vec2 point_to   = apply_variations(current_point, t.variation.y, rand_state);
 
         // Smoothly blend the results using the alpha we passed in
         current_point = mix(point_from, point_to, t.params2.z);

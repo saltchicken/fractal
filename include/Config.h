@@ -7,6 +7,7 @@
 // Configuration-related data structures
 enum Variation { LINEAR, SINUSOIDAL, SPHERICAL, SWIRL, HORSESHOE,
                  POLAR, HEART, DISK, SPIRAL, HYPERBOLIC,
+                 JULIA, BENT, FISHEYE, POPCORN, DIAMOND,
                  VARIATION_COUNT
 };
 
