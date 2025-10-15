@@ -126,14 +126,49 @@ void Config::handle_post_processing(const std::string& name, const std::string& 
 }
 
 void Config::handle_randomization(const std::string& name, const std::string& value) {
-    if (name == "ColorMode") {
-        std::string mode_str = value;
-        std::transform(mode_str.begin(), mode_str.end(), mode_str.begin(), ::tolower);
-        if (mode_str == "template" || mode_str == "random") {
-            random_color_mode = mode_str;
+    std::string val_str = value;
+    trim(val_str);
+
+    if (name == "NumTransforms") {
+        size_t comma_pos = val_str.find(',');
+        if (comma_pos != std::string::npos) {
+            try {
+                int min_val = std::stoi(val_str.substr(0, comma_pos));
+                int max_val = std::stoi(val_str.substr(comma_pos + 1));
+                random_num_transforms = {std::min(min_val, max_val), std::max(min_val, max_val)};
+            } catch (const std::exception&) { /* Use default */ }
         } else {
-            std::cerr << "Warning: Invalid ColorMode '" << value << "'. Using 'template'." << std::endl;
-            random_color_mode = "template";
+            try {
+                int val = std::stoi(val_str);
+                random_num_transforms = {val, val};
+            } catch (const std::exception&) { /* Use default */ }
+        }
+    } else if (name == "Variations") {
+        random_variations.clear();
+        std::stringstream ss(val_str);
+        std::string var_name;
+        while(std::getline(ss, var_name, ',')) {
+            trim(var_name);
+            if(variation_map.count(var_name)) {
+                random_variations.push_back(variation_map.at(var_name));
+            }
+        }
+    } else if (name == "ColorMode") {
+        std::transform(val_str.begin(), val_str.end(), val_str.begin(), ::tolower);
+        if (val_str == "palette") random_color_mode = RCM_PALETTE;
+        else if (val_str == "random") random_color_mode = RCM_RANDOM;
+    } else if (name == "Palette") {
+        random_palette.clear();
+        std::stringstream ss(val_str);
+        std::string color_group;
+        while(std::getline(ss, color_group, ',')) {
+            trim(color_group);
+            glm::vec3 color;
+            std::stringstream cs(color_group);
+            cs >> color.r >> color.g >> color.b;
+            if (!cs.fail()) {
+                random_palette.push_back(color);
+            }
         }
     } else if (name == "RandomColorR") {
         random_color_range_r = parse_vec2(value);

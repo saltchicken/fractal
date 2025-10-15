@@ -29,6 +29,7 @@ struct Transform {
 };
 
 enum AnimationMode { PING_PONG, LOOP, RANDOM, BOUNCE };
+enum RandomColorMode { RCM_RANDOM, RCM_PALETTE };
 
 // A class to load and hold all configuration data from config.ini
 class Config {
@@ -60,7 +61,10 @@ public:
     unsigned int getTargetFPS() const { return target_fps; }
     const std::vector<std::vector<Transform>>& getStates() const { return states; }
 
-    const std::string& getRandomColorMode() const { return random_color_mode; }
+    const glm::ivec2& getRandomNumTransforms() const { return random_num_transforms; }
+    const std::vector<Variation>& getRandomVariations() const { return random_variations; }
+    RandomColorMode getRandomColorMode() const { return random_color_mode; }
+    const std::vector<glm::vec3>& getRandomPalette() const { return random_palette; }
     const glm::vec2& getRandomColorRangeR() const { return random_color_range_r; }
     const glm::vec2& getRandomColorRangeG() const { return random_color_range_g; }
     const glm::vec2& getRandomColorRangeB() const { return random_color_range_b; }
@@ -103,7 +107,10 @@ private:
     // Parsed fractal states
     std::vector<std::vector<Transform>> states;
 
-    std::string random_color_mode = "template"; // "template" or "random"
+    glm::ivec2 random_num_transforms{2, 2};
+    std::vector<Variation> random_variations;
+    RandomColorMode random_color_mode = RCM_PALETTE;
+    std::vector<glm::vec3> random_palette;
     glm::vec2 random_color_range_r{0.0f, 1.0f};
     glm::vec2 random_color_range_g{0.0f, 1.0f};
     glm::vec2 random_color_range_b{0.0f, 1.0f};
