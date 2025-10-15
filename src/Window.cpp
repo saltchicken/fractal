@@ -28,7 +28,7 @@ Window::~Window() {
     glfwTerminate();
 }
 
-bool Window::init(unsigned int width, unsigned int height, const std::string& title) {
+bool Window::init(unsigned int width, unsigned int height, const std::string& title, bool transparent) {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
         return false;
@@ -36,7 +36,7 @@ bool Window::init(unsigned int width, unsigned int height, const std::string& ti
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
+    glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, transparent ? GLFW_TRUE : GLFW_FALSE);
 
     m_window = glfwCreateWindow(width, height, title.c_str(), NULL, NULL);
     if (!m_window) {

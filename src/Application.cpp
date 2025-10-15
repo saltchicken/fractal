@@ -15,6 +15,7 @@ Application::Application(int argc, char* argv[]) {
     cxxopts::Options options("FractalFlame", "A GPU-accelerated fractal flame renderer");
     options.add_options()
         ("c,config", "Path to config INI", cxxopts::value<std::string>()->default_value("config.ini"))
+        ("t,transparent", "Enable transparent window background", cxxopts::value<bool>()->default_value("false"))
         ("h,help", "Print usage");
     
     auto result = options.parse(argc, argv);
@@ -23,6 +24,7 @@ Application::Application(int argc, char* argv[]) {
         exit(0);
     }
     m_config_path = result["config"].as<std::string>();
+    m_is_transparent = result["transparent"].as<bool>();
     m_window = std::make_unique<Window>();
     m_renderer = std::make_unique<Renderer>();
     m_animator = std::make_unique<Animator>();
@@ -49,7 +51,7 @@ void Application::loadConfig() {
 
 void Application::run() {
     loadConfig();
-    if (!m_window->init(m_width, m_height, "GPU Fractal Flame")) return;
+    if (!m_window->init(m_width, m_height, "GPU Fractal Flame", m_is_transparent)) return;
     if (!m_renderer->init(m_config)) return;
     
     m_animator->reset(m_config);
@@ -109,7 +111,7 @@ void Application::run() {
         }
         m_animator->update(delta_time, m_config);
         
-        m_renderer->render(m_config, m_animator->getInterpolatedTransforms(), m_width, m_height);
+        m_renderer->render(m_config, m_animator->getInterpolatedTransforms(), m_width, m_height, m_is_transparent);
         m_window->swapBuffers();
 
         if (target_frame_time > 0.0) {

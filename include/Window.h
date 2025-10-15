@@ -12,7 +12,7 @@ public:
     Window();
     ~Window();
 
-    bool init(unsigned int width, unsigned int height, const std::string& title);
+    bool init(unsigned int width, unsigned int height, const std::string& title, bool transparent);
 
     bool shouldClose() const;
     void processInput();

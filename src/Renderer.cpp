@@ -59,7 +59,7 @@ void Renderer::resetGPUResources(const Config& config) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void Renderer::render(const Config& config, const std::vector<Transform>& transforms, unsigned int width, unsigned int height) {
+void Renderer::render(const Config& config, const std::vector<Transform>& transforms, unsigned int width, unsigned int height, bool is_transparent) {
     // --- PART 0: GPU Compute ---
     if (!transforms.empty()) {
         generateFractalOnGPU(config, transforms);
@@ -108,6 +108,11 @@ void Renderer::render(const Config& config, const std::vector<Transform>& transf
 
     // --- PART 3: Final Display Pass ---
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (is_transparent) {
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    } else {
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    }
     glClear(GL_COLOR_BUFFER_BIT);
     m_quadShader->use();
     m_quadShader->setFloat("u_blend_factor", 0.0f);

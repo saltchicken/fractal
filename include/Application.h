@@ -43,4 +43,6 @@ private:
     double m_last_frame_time = 0.0;
     unsigned int m_width = 0;
     unsigned int m_height = 0;
+
+    bool m_is_transparent = false;
 };
