@@ -132,7 +132,11 @@ void Animator::update(float delta_time, const Config& config) {
         interpolated.params1 = glm::mix(prev.params1, target.params1, m_interpolation_alpha);
         interpolated.params2 = glm::mix(prev.params2, target.params2, m_interpolation_alpha);
         interpolated.color = glm::mix(prev.color, target.color, m_interpolation_alpha);
-        interpolated.variation = (m_interpolation_alpha < 0.5f) ? prev.variation : target.variation;
+
+        // Pass BOTH variations and the interpolation alpha to the GPU
+        interpolated.variation.x = prev.variation.x;      // 'From' variation
+        interpolated.variation.y = target.variation.x;      // 'To' variation
+        interpolated.params2.z = m_interpolation_alpha; // The mix factor
 
         m_interpolated_transforms.push_back(interpolated);
     }

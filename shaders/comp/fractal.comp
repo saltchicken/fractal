@@ -101,7 +101,13 @@ void main() {
         uint t_idx = uint(random(rand_state) * num_transforms);
         Transform t = transforms[t_idx];
         current_point = vec2(t.params1.x * current_point.x + t.params1.y * current_point.y + t.params1.z, t.params1.w * current_point.x + t.params2.x * current_point.y + t.params2.y);
-        current_point = apply_variations(current_point, t.variation.x);
+
+        // Calculate the result of BOTH variations
+        vec2 point_from = apply_variations(current_point, t.variation.x);
+        vec2 point_to   = apply_variations(current_point, t.variation.y);
+
+        // Smoothly blend the results using the alpha we passed in
+        current_point = mix(point_from, point_to, t.params2.z);
     }
     
     vec3 accumulated_color = vec3(0.0);
@@ -114,7 +120,13 @@ void main() {
         
         // Apply affine transform and variation
         current_point = vec2(t.params1.x * current_point.x + t.params1.y * current_point.y + t.params1.z, t.params1.w * current_point.x + t.params2.x * current_point.y + t.params2.y);
-        current_point = apply_variations(current_point, t.variation.x);
+
+        // Calculate the result of BOTH variations
+        vec2 point_from = apply_variations(current_point, t.variation.x);
+        vec2 point_to   = apply_variations(current_point, t.variation.y);
+
+        // Smoothly blend the results using the alpha we passed in
+        current_point = mix(point_from, point_to, t.params2.z);
 
         // Blend the color at each step
         if (i == 0) {
