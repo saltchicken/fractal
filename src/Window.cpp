@@ -38,7 +38,13 @@ bool Window::init(unsigned int width, unsigned int height, const std::string& ti
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, transparent ? GLFW_TRUE : GLFW_FALSE);
 
-    m_window = glfwCreateWindow(width, height, title.c_str(), NULL, NULL);
+    std::string title_str;
+    if (transparent) {
+      title_str = title + " - Transparent";
+    } else {
+      title_str = title;
+    }
+    m_window = glfwCreateWindow(width, height, title_str.c_str(), NULL, NULL);
     if (!m_window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
