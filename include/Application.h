@@ -4,7 +4,6 @@
 #include <memory>
 #include <filesystem>
 
-// --- ADDED BACK: Forward declarations of main components ---
 class Window;
 class Renderer;
 class Animator;
@@ -41,6 +40,7 @@ private:
     double m_fps_timer = 0.0;
     
     double m_last_frame_time = 0.0;
+    double m_target_frame_time = 0.0;
     unsigned int m_width = 0;
     unsigned int m_height = 0;
 

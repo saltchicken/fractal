@@ -29,9 +29,7 @@ Application::Application(int argc, char* argv[]) {
     m_renderer = std::make_unique<Renderer>();
     m_animator = std::make_unique<Animator>();
 }
-
 Application::~Application() = default;
-
 void Application::loadConfig() {
     // Load into the target config first
     if (!m_target_config.load(m_config_path)) {
@@ -47,8 +45,13 @@ void Application::loadConfig() {
     m_source_config = m_target_config;
     m_width = m_config.getWidth();
     m_height = m_config.getHeight();
+    unsigned int target_fps = m_config.getTargetFPS();
+    if (target_fps > 0) {
+        m_target_frame_time = 1.0 / static_cast<double>(target_fps);
+    } else {
+        m_target_frame_time = 0.0;
+    }
 }
-
 void Application::run() {
     loadConfig();
     if (!m_window->init(m_width, m_height, "GPU Fractal Flame", m_is_transparent)) return;
@@ -59,22 +62,8 @@ void Application::run() {
         this->handleWindowResize(width, height);
     });
     
-    double target_frame_time = 0.0;
-    unsigned int target_fps = m_config.getTargetFPS();
-    if (target_fps > 0) {
-        target_frame_time = 1.0 / static_cast<double>(target_fps);
-    }
-    
     m_last_frame_time = glfwGetTime();
     while (!m_window->shouldClose()) {
-        // TODO: Move this so its only called when a change is detected
-        unsigned int target_fps = m_config.getTargetFPS();
-        if (target_fps > 0) {
-            target_frame_time = 1.0 / static_cast<double>(target_fps);
-        } else {
-            target_frame_time = 0.0;
-        }
-
         double current_time = glfwGetTime();
         float delta_time = static_cast<float>(current_time - m_last_frame_time);
         m_last_frame_time = current_time;
@@ -113,24 +102,31 @@ void Application::run() {
         
         m_renderer->render(m_config, m_animator->getInterpolatedTransforms(), m_width, m_height, m_is_transparent);
         m_window->swapBuffers();
+        if (m_target_frame_time > 0.0) {
+            double frame_end_time = glfwGetTime();
+            double time_to_wait = m_target_frame_time - (frame_end_time - current_time);
 
-        if (target_frame_time > 0.0) {
-            double time_spent_this_frame = glfwGetTime() - current_time;
-            if (time_spent_this_frame < target_frame_time) {
-                // We finished the frame early, so wait for the remaining time
-                auto sleep_duration = std::chrono::duration<double>(target_frame_time - time_spent_this_frame);
-                std::this_thread::sleep_for(sleep_duration);
+            if (time_to_wait > 0) {
+                // Hybrid sleep/yield for better accuracy.
+                // Only sleep if we have a significant amount of time to wait (e.g., > 2ms).
+                if (time_to_wait > 0.002) {
+                    std::this_thread::sleep_for(std::chrono::duration<double>(time_to_wait - 0.0015));
+                }
+
+                // Spin-wait for the final moments to achieve higher precision.
+                // Yielding is friendlier to the OS scheduler than a tight empty loop.
+                while (glfwGetTime() - current_time < m_target_frame_time) {
+                    std::this_thread::yield();
+                }
             }
         }
     }
 }
-
 void Application::handleWindowResize(int width, int height) {
     m_width = width;
     m_height = height;
     m_renderer->onWindowResize(width, height);
 }
-
 void Application::check_for_config_updates() {
     try {
         auto current_write_time = std::filesystem::last_write_time(m_config_path);
@@ -140,6 +136,13 @@ void Application::check_for_config_updates() {
             
             Config new_config;
             if (new_config.load(m_config_path)) {
+                // Update frame limiter on any successful reload
+                unsigned int new_target_fps = new_config.getTargetFPS();
+                if (new_target_fps > 0) {
+                    m_target_frame_time = 1.0 / static_cast<double>(new_target_fps);
+                } else {
+                    m_target_frame_time = 0.0;
+                }
                 // Compare new_config against the current target
                 bool points_changed = m_target_config.getTotalPoints() != new_config.getTotalPoints();
                 bool animation_sequence_changed =
@@ -155,7 +158,6 @@ void Application::check_for_config_updates() {
                     m_target_config.getRandomColorRangeR() != new_config.getRandomColorRangeR() ||
                     m_target_config.getRandomColorRangeG() != new_config.getRandomColorRangeG() ||
                     m_target_config.getRandomColorRangeB() != new_config.getRandomColorRangeB();
-
                 unsigned int old_width = m_target_config.getWidth();
                 if (animation_sequence_changed) {
                     std::cout << "Animation sequence change detected, resetting animator." << std::endl;
