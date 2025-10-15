@@ -147,6 +147,15 @@ void Application::check_for_config_updates() {
                     m_target_config.getStates() != new_config.getStates() ||
                     m_target_config.getFractalSeed() != new_config.getFractalSeed();
                 
+                bool randomization_params_changed =
+                    m_target_config.getRandomNumTransforms() != new_config.getRandomNumTransforms() ||
+                    m_target_config.getRandomVariations() != new_config.getRandomVariations() ||
+                    m_target_config.getRandomColorMode() != new_config.getRandomColorMode() ||
+                    m_target_config.getRandomPalette() != new_config.getRandomPalette() ||
+                    m_target_config.getRandomColorRangeR() != new_config.getRandomColorRangeR() ||
+                    m_target_config.getRandomColorRangeG() != new_config.getRandomColorRangeG() ||
+                    m_target_config.getRandomColorRangeB() != new_config.getRandomColorRangeB();
+
                 unsigned int old_width = m_target_config.getWidth();
                 if (animation_sequence_changed) {
                     std::cout << "Animation sequence change detected, resetting animator." << std::endl;
@@ -168,6 +177,16 @@ void Application::check_for_config_updates() {
                     m_config.setWarmupIterations(new_config.getWarmupIterations());
                     m_config.setMainIterations(new_config.getMainIterations());
                     m_config.setTargetFPS(new_config.getTargetFPS());
+                    if (randomization_params_changed) {
+                        std::cout << "Randomization settings will update on next cycle." << std::endl;
+                        m_config.setRandomNumTransforms(new_config.getRandomNumTransforms());
+                        m_config.setRandomVariations(new_config.getRandomVariations());
+                        m_config.setRandomColorMode(new_config.getRandomColorMode());
+                        m_config.setRandomPalette(new_config.getRandomPalette());
+                        m_config.setRandomColorRangeR(new_config.getRandomColorRangeR());
+                        m_config.setRandomColorRangeG(new_config.getRandomColorRangeG());
+                        m_config.setRandomColorRangeB(new_config.getRandomColorRangeB());
+                    }
                     m_param_interpolation_alpha = 0.0f; // Start the interpolation
                 }
                 

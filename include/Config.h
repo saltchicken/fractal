@@ -80,6 +80,13 @@ public:
     void setWarmupIterations(unsigned int val) { warmup_iterations = val; }
     void setMainIterations(unsigned int val) { main_iterations = val; }
     void setTargetFPS(unsigned int val) { target_fps = val; }
+    void setRandomNumTransforms(const glm::ivec2& val) { random_num_transforms = val; }
+    void setRandomVariations(const std::vector<Variation>& val) { random_variations = val; }
+    void setRandomColorMode(RandomColorMode val) { random_color_mode = val; }
+    void setRandomPalette(const std::vector<glm::vec3>& val) { random_palette = val; }
+    void setRandomColorRangeR(const glm::vec2& val) { random_color_range_r = val; }
+    void setRandomColorRangeG(const glm::vec2& val) { random_color_range_g = val; }
+    void setRandomColorRangeB(const glm::vec2& val) { random_color_range_b = val; }
 
 
 private:
@@ -101,7 +108,7 @@ private:
     unsigned int warmup_iterations = 20;
     unsigned int main_iterations = 150;
     float point_alpha = 0.15f;
-    unsigned int target_fps = 0; // Add this member variable
+    unsigned int target_fps = 0;
 
     // Parsed fractal states
     std::vector<std::vector<Transform>> states;
